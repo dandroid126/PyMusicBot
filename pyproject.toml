@@ -1,0 +1,26 @@
+[project]
+name = "pymusicbot"
+version = "0.1.0"
+description = "A self-hosted Discord music bot with local file playback, rewritten from JMusicBot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py[voice]==2.7.1",
+    "yt-dlp[default]",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+pymusicbot = "pymusicbot.__main__:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

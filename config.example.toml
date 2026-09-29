@@ -1,0 +1,56 @@
+# PyMusicBot configuration
+#
+# Copy this file to config/config.toml and change what you need. Every setting is optional;
+# the values shown are the defaults. The bot only reads this file and never writes to it.
+#
+# Secrets don't go here: put DISCORD_TOKEN (and optionally OWNER_ID) in .env.
+# Per-server settings (DJ role, channels, volume, ...) are changed with slash commands and
+# saved by the bot in data/settings.json.
+#
+# Relative paths are resolved against the data directory (/data in Docker).
+#
+# Coming from JMusicBot's config.txt: the same settings, grouped into sections and renamed
+# with underscores. Not carried over: token (now in .env), prefix, altprefix, help and
+# aliases (slash commands replace them), updatealerts, lyrics, transforms, eval.
+
+# Discord user ID of the bot owner. Leave unset to use the owner of the Discord application.
+# owner_id = 123456789012345678
+
+# How much to log: debug, info, warning, error or critical.
+log_level = "info"
+
+[presence]
+# The bot's activity. DEFAULT shows "Listening to /play" and NONE shows nothing. Otherwise
+# start with Playing, Listening to, Watching or Streaming <twitch user>, e.g. "Watching the queue".
+game = "DEFAULT"
+# online, idle, dnd or invisible.
+status = "online"
+# Show the current song as the bot's activity. Only works while it plays in one server.
+song_in_status = false
+
+[player]
+# Stay in the voice channel after the queue ends.
+stay_in_channel = false
+# Longest track that can be queued, in seconds. 0 means no limit.
+max_track_length = 0
+# Most tracks loaded from one online playlist (JMusicBot's maxytplaylistpages x 100).
+max_playlist_tracks = 1000
+# Share of listeners who must vote to skip, from 0 to 1. Servers can override it with /setskip.
+skip_ratio = 0.55
+# Seconds to wait alone in a voice channel before stopping and leaving. 0 means never.
+alone_time_until_stop = 0
+# Show thumbnails in the now-playing message. Thumbnail messages don't refresh.
+now_playing_images = false
+
+[files]
+# Folders local files can be played from. Paths outside them are refused.
+music_folders = ["/music"]
+# Folder of playlist files (same plain-text format as JMusicBot).
+playlists_folder = "Playlists"
+
+[emoji]
+success = "🎶"
+warning = "💡"
+error = "🚫"
+loading = "⌚"
+searching = "🔎"

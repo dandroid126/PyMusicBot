@@ -1,0 +1,16 @@
+services:
+  pymusicbot:
+    build:
+      context: .
+      target: runtime
+    image: pymusicbot
+    env_file: .env
+    volumes:
+      # config.toml, read-only: the bot never writes to it.
+      - ./config:/config:ro
+      # settings.json, playlists, and serversettings.json when migrating from JMusicBot.
+      - ./data:/data
+      # Your music library, read-only. Set MUSIC_DIR in .env to point at it.
+      - ${MUSIC_DIR:-./music}:/music:ro
+    # /shutdown exits cleanly and stays stopped; crashes are restarted.
+    restart: on-failure

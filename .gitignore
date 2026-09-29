@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Instance files: each deployment has its own.
+config/*
+!config/.gitkeep
+data/*
+!data/.gitkeep
+music/*
+!music/.gitkeep
