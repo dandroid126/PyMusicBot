@@ -4,8 +4,20 @@ A self-hosted Discord music bot that plays online sources and your own local mus
 It's a Python rewrite of [JMusicBot](https://github.com/jagrosh/MusicBot) by John Grosh,
 which stopped working when Discord made voice encryption (DAVE) mandatory in March 2026.
 
-Status: Phase 1 (foundation). The bot starts, loads its config and settings, and has the
-settings commands. Music playback comes in Phase 2.
+Status: Phase 2 (core player). Playback from URLs, searches and the local music library
+works. Playlists, autoplay and the remaining DJ and owner commands come in Phase 3.
+
+## Commands
+
+| Who | Commands |
+| --- | --- |
+| Everyone | `/play`, `/search`, `/scsearch`, `/local`, `/queue`, `/nowplaying`, `/skip`, `/remove`, `/shuffle`, `/seek`, `/settings` |
+| DJs | `/pause`, `/stop`, `/volume`, `/repeat` |
+| Admins (Manage Server) | `/setdj`, `/settc`, `/setvc`, `/setskip`, `/queuetype` |
+| Owner | `/shutdown` |
+
+`/play` takes a URL, words to search YouTube for, or a file or folder from the music library
+(suggestions appear as you type). A folder queues every audio file in it.
 
 ## Files
 

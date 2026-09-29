@@ -70,6 +70,8 @@ class Admin(commands.Cog):
             await interaction.response.send_message(f"The queue type is **{current.value.title()}**.")
             return
         self.bot.settings.update(interaction.guild_id, queue_type=queue_type)
+        if player := self.bot.players.find(interaction.guild_id):
+            player.set_queue_type(queue_type)
         await interaction.response.send_message(self.bot.reply("success", f"Queue type set to **{queue_type.value.title()}**."))
 
 
