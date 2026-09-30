@@ -1,8 +1,9 @@
 version: 2
 updates:
-  # Python packages in uv.lock. yt-dlp is checked daily and gets its own PR, because YouTube
-  # changes often break older versions; everything else is grouped into one PR.
-  - package-ecosystem: uv
+  # Python packages pinned in requirements.txt and requirements-test.txt. yt-dlp is checked
+  # daily and gets its own PR, because YouTube changes often break older versions; everything
+  # else is grouped into one PR. CI installs each PR with pip, so an invalid bump fails there.
+  - package-ecosystem: pip
     directory: /
     schedule:
       interval: daily

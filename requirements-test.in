@@ -1,0 +1,3 @@
+# Test tools. scripts/lock.sh compiles this into requirements-test.txt, held to the same
+# versions as requirements.txt.
+pytest>=8

@@ -59,14 +59,16 @@ search on purpose. A server's default playlist
 
 ## Dependencies
 
-`pyproject.toml` lists the allowed version ranges. `uv.lock` pins the exact version and hash of
-every package; Docker and CI install from it. `requirements.txt` (and `requirements-test.txt`)
-are exported from the lock for installing with plain pip.
+`requirements.txt` pins the exact, tested version of every package, with hashes, for Windows and
+Linux on Python 3.12 or newer. It's the one source of truth: server owners install it with
+`pip install -r requirements.txt`, and the Docker image and CI install the same file.
 
-- `scripts/lock.sh` re-syncs the requirements files after editing `pyproject.toml`.
+- `pyproject.toml` lists the allowed version ranges that `requirements.txt` is resolved from.
+- `scripts/lock.sh` regenerates the file after editing `pyproject.toml` (needs
+  [uv](https://docs.astral.sh/uv/); only maintainers need it).
 - `scripts/lock.sh --upgrade-package yt-dlp` updates yt-dlp when YouTube breaks it.
-- Dependabot opens a PR for each yt-dlp release (daily) and one grouped PR for everything else.
-  CI tests the new versions, and the requirements files are regenerated on the PR automatically.
+- Dependabot opens a PR for each yt-dlp release (checked daily) and one grouped PR for
+  everything else. CI installs and tests every PR on Linux and Windows.
 
 ## Tests
 

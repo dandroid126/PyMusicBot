@@ -6,25 +6,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# uv installs the exact versions pinned in uv.lock.
+# uv installs requirements.txt like pip does, only faster.
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
 ENV UV_NO_CACHE=1
 
 WORKDIR /app
 
 # Dependencies get their own layer, so code changes don't reinstall them.
-COPY pyproject.toml uv.lock ./
-RUN uv export --locked --no-emit-project --no-dev > /tmp/requirements.txt \
-    && uv pip install --system --require-hashes -r /tmp/requirements.txt
+COPY requirements.txt ./
+RUN uv pip install --system --require-hashes -r requirements.txt
 
-COPY README.md ./
+COPY pyproject.toml README.md ./
 COPY src ./src
 RUN uv pip install --system --no-deps .
 
 
 FROM base AS test
-RUN uv export --locked --no-emit-project --no-dev --extra test > /tmp/requirements-test.txt \
-    && uv pip install --system --require-hashes -r /tmp/requirements-test.txt
+COPY requirements-test.txt ./
+RUN uv pip install --system --require-hashes -r requirements-test.txt
 COPY config.example.toml ./
 COPY tests ./tests
 CMD ["pytest", "-q"]
