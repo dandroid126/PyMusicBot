@@ -46,6 +46,7 @@ class Admin(commands.Cog):
         self.bot.settings.update(interaction.guild_id, voice_channel_id=channel.id if channel else None)
         text = f"Music can now only be played in {channel.mention}." if channel else "Music can now be played in any voice channel."
         await interaction.response.send_message(self.bot.reply("success", text))
+        await self.bot.players.autostart(interaction.guild)
 
     @app_commands.command(description="Set the percentage of listeners needed to skip. Leave empty for the default.")
     @admin_command

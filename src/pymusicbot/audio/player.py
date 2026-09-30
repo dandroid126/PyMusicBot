@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import shlex
+import time
 from typing import TYPE_CHECKING
 
 import discord
+from discord.ext import tasks
 
+from ..playlists import Playlist, ShuffleMode
 from ..settings import QueueType, RepeatMode
 from .queue import TrackQueue
 from .sources import SourceError
@@ -22,6 +26,12 @@ if TYPE_CHECKING:
     from ..bot import MusicBot
 
 log = logging.getLogger(__name__)
+
+def log_failure(future: asyncio.Future) -> None:
+    """Done-callback for background work, so its errors reach the log instead of vanishing."""
+    if not future.cancelled() and future.exception() is not None:
+        log.error("Background player task failed", exc_info=future.exception())
+
 
 FRAME_SECONDS = 0.02  # discord.py sends audio in 20 ms frames
 RECONNECT = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
@@ -56,9 +66,15 @@ class GuildPlayer:
         self.current: Track | None = None
         self.audio: TrackAudio | None = None
         self.votes: set[int] = set()  # members who voted to skip the current track
-        self.text_channel_id: int | None = None  # where playback problems are reported
+        self.text_channel_id = settings.text_channel_id  # where playback problems are reported
         self._play_id = 0  # identifies the running voice.play() call; a seek keeps it
         self._end_reason: str | None = None  # "skip" or "stop" when the bot ends a track itself
+        # Autoplay: tracks from the server's default playlist, played when the queue is empty.
+        # Requests always go ahead of these.
+        self.autoplay: list[Track] = []
+        self._autoplay_pool: list[Track] = []  # random mode: every song, picked from at random
+        self._autoplay_task: asyncio.Task | None = None
+        self._played_since_autoplay_load = True
 
     # State
 
@@ -132,7 +148,8 @@ class GuildPlayer:
 
     async def stop(self) -> None:
         """Stop playing, clear the queue and leave the voice channel."""
-        self.queue.clear()
+        log.info("Stopping in %s", self.guild)
+        self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
         voice = self.voice
@@ -169,9 +186,30 @@ class GuildPlayer:
         if old:
             old.cleanup()
 
+    async def reload_autoplay(self) -> None:
+        """Use the server's current default playlist from the next song on.
+
+        Tracks already loaded from the old one are dropped; the song playing now finishes.
+        If the bot is idle in voice, the new playlist starts right away.
+        """
+        self.autoplay.clear()
+        self._autoplay_pool.clear()
+        if self._autoplay_task:
+            self._autoplay_task.cancel()
+            self._autoplay_task = None
+        self._played_since_autoplay_load = True
+        if self.current is None and self.voice is not None:
+            await self._advance()
+
+    def halt(self) -> None:
+        """Stop reacting before shutdown: clear everything, but leave disconnecting to discord.py."""
+        self._clear_queues()
+        self._end_reason = "stop"
+        self._clear_current()
+
     def reset(self) -> None:
         """Forget everything after the bot left voice without being told to (kicked, moved out)."""
-        self.queue.clear()
+        self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
         self.bot.on_track_change(self)
@@ -179,15 +217,73 @@ class GuildPlayer:
     # Playback
 
     async def _advance(self) -> None:
-        """Play the next queued track that loads, or finish when the queue is empty."""
-        while self.queue:
-            track = self.queue.pull()
+        """Play the next track that loads: requests first, then autoplay. Leave when there's none."""
+        while track := self._next_track():
             self.current = track  # claimed before any await, so concurrent adds queue behind it
             if await self._start(track, track.start_offset):
                 return
+            if track.requester is None:  # autoplay; don't keep picking a song that won't play
+                self._autoplay_pool = [t for t in self._autoplay_pool if t.source != track.source]
         self._clear_current()
         self.bot.on_track_change(self)
-        if not self.bot.config.player.stay_in_channel:
+        if self._start_autoplay():
+            return  # the default playlist is loading; its first track will start playback
+        if self.bot.config.player.stay_in_channel:
+            log.info("Queue finished in %s; staying in voice", self.guild)
+        else:
+            log.info("Queue finished in %s with no default playlist to play; leaving voice", self.guild)
+            await self.disconnect()
+
+    def _next_track(self) -> Track | None:
+        if self.queue:
+            return self.queue.pull()
+        self._pick_random()
+        if self.autoplay:
+            return self.autoplay.pop(0)
+        return None
+
+    def _pick_random(self) -> None:
+        """In random mode, keep one randomly picked song lined up, so it can be prefetched."""
+        if self._autoplay_pool and not self.autoplay:
+            self.autoplay.append(random.choice(self._autoplay_pool).fresh_copy())
+
+    def _start_autoplay(self) -> bool:
+        """Start loading the default playlist in the background. False if there's nothing to load."""
+        if self._autoplay_task and not self._autoplay_task.done():
+            return True
+        name = self.bot.settings.get(self.guild_id).default_playlist
+        if not name or self.voice is None:
+            return False
+        if not self._played_since_autoplay_load:
+            log.warning("Nothing from the default playlist %s could be played; not reloading it", name)
+            return False
+        playlist = self.bot.playlists.load(name)
+        if playlist is None or not playlist.items:
+            return False
+        self._played_since_autoplay_load = False
+        self._autoplay_task = asyncio.create_task(self._load_autoplay(playlist))
+        self._autoplay_task.add_done_callback(log_failure)
+        return True
+
+    async def _load_autoplay(self, playlist: Playlist) -> None:
+        log.info("Loading default playlist %s (%d entries)", playlist.name, len(playlist.items))
+        async for _, item, result in self.bot.sources.resolve_each(playlist.items, None):
+            if isinstance(result, SourceError):
+                log.info("Default playlist %s: skipped %s: %s", playlist.name, item, result)
+                continue
+            for track in result.tracks:
+                if playlist.mode == ShuffleMode.RANDOM:
+                    self._autoplay_pool.append(track)
+                elif playlist.mode == ShuffleMode.SHUFFLE:
+                    # A random spot among the songs still to come: songs from a folder or online
+                    # playlist get mixed in with everything else, not kept together.
+                    self.autoplay.insert(random.randint(0, len(self.autoplay)), track)
+                else:
+                    self.autoplay.append(track)
+            if self.current is None and self.voice is not None:
+                await self._advance()
+        idle = self.current is None and not self.queue and not self.autoplay and not self._autoplay_pool
+        if idle and self.voice is not None and not self.bot.config.player.stay_in_channel:
             await self.disconnect()
 
     async def _start(self, track: Track, position: float) -> bool:
@@ -200,7 +296,7 @@ class GuildPlayer:
             return True
         voice = self.voice
         if voice is None:  # left voice while loading
-            self.queue.clear()
+            self._clear_queues()
             self._clear_current()
             self.bot.on_track_change(self)
             return True
@@ -211,20 +307,25 @@ class GuildPlayer:
         loop = asyncio.get_running_loop()
 
         def after(error: Exception | None) -> None:
-            asyncio.run_coroutine_threadsafe(self._on_play_end(play_id, error), loop)
+            future = asyncio.run_coroutine_threadsafe(self._on_play_end(play_id, error), loop)
+            future.add_done_callback(log_failure)
 
         self.audio = audio
         self.votes.clear()
+        self._played_since_autoplay_load = True
         voice.play(audio, after=after)
         log.info("Playing %s in %s", track.title, voice.channel)
         self.bot.on_track_change(self)
-        if self.queue:
-            asyncio.create_task(self._prefetch(self.queue[0]))
+        if not self.queue:
+            self._pick_random()
+        upcoming = self.queue[0] if self.queue else self.autoplay[0] if self.autoplay else None
+        if upcoming:
+            asyncio.create_task(self._prefetch(upcoming))
         return True
 
     async def _on_play_end(self, play_id: int, error: Exception | None) -> None:
-        if play_id != self._play_id:
-            return  # a play() that was already replaced
+        if play_id != self._play_id or self.bot.shutting_down:
+            return  # a play() that was already replaced, or the bot is shutting down
         reason, self._end_reason = self._end_reason, None
         if reason == "stop":
             return
@@ -258,6 +359,15 @@ class GuildPlayer:
         except SourceError:
             pass  # reported if it still fails when its turn comes
 
+    def _clear_queues(self) -> None:
+        self.queue.clear()
+        self.autoplay.clear()
+        self._autoplay_pool.clear()
+        if self._autoplay_task:
+            self._autoplay_task.cancel()
+            self._autoplay_task = None
+        self._played_since_autoplay_load = True
+
     def _clear_current(self) -> None:
         self.current = None
         self.audio = None
@@ -277,6 +387,11 @@ class PlayerManager:
     def __init__(self, bot: MusicBot):
         self.bot = bot
         self._players: dict[int, GuildPlayer] = {}
+        self._alone_since: dict[int, float] = {}  # guild ID -> when the bot was left alone
+
+    def start(self) -> None:
+        if self.bot.config.player.alone_time_until_stop > 0:
+            self._stop_when_alone.start()
 
     def get(self, guild_id: int) -> GuildPlayer:
         if guild_id not in self._players:
@@ -286,12 +401,48 @@ class PlayerManager:
     def find(self, guild_id: int) -> GuildPlayer | None:
         return self._players.get(guild_id)
 
+    def shutdown(self) -> None:
+        self._stop_when_alone.cancel()
+        for player in self._players.values():
+            player.halt()
+
+    async def autostart(self, guild: discord.Guild) -> None:
+        """Like JMusicBot at startup: with a default playlist and a /setvc channel, join it and play.
+
+        Also used when either setting changes, so a new setup never needs a restart. Does
+        nothing if the bot is already playing or has queued songs there.
+        """
+        settings = self.bot.settings.get(guild.id)
+        channel = guild.get_channel(settings.voice_channel_id or 0)
+        if not settings.default_playlist or not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+            return
+        player = self.get(guild.id)
+        if player.current is not None or player.queue:
+            return
+        if self.bot.playlists.load(settings.default_playlist) is None:
+            log.warning("Default playlist %s for %s doesn't exist", settings.default_playlist, guild)
+            return
+        try:
+            await player.connect(channel)
+        except (discord.ClientException, TimeoutError) as e:
+            log.warning("Couldn't join %s in %s to start the default playlist: %s", channel, guild, e)
+            return
+        log.info("Starting default playlist %s in %s", settings.default_playlist, channel)
+        await player.reload_autoplay()
+
+    async def default_playlist_edited(self, name: str) -> None:
+        """A playlist file changed; servers using it as their default pick up the change."""
+        for player in list(self._players.values()):
+            if self.bot.settings.get(player.guild_id).default_playlist == name:
+                await player.reload_autoplay()
+
     def active(self) -> list[GuildPlayer]:
         return [p for p in self._players.values() if p.is_active]
 
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
     ) -> None:
+        self._check_alone(member.guild)
         if member.id != self.bot.user.id or after.channel is not None:
             return
         player = self.find(member.guild.id)
@@ -301,3 +452,28 @@ class PlayerManager:
         if player.voice is None and (player.current or player.queue):
             log.info("Left voice in %s; clearing the queue", member.guild)
             player.reset()
+
+    def _check_alone(self, guild: discord.Guild) -> None:
+        """Note when nobody is listening in the bot's channel (bots and deafened members don't count)."""
+        if self.bot.config.player.alone_time_until_stop <= 0:
+            return
+        player = self.find(guild.id)
+        voice = player.voice if player else None
+        alone = voice is not None and not any(
+            not m.bot and not (m.voice and (m.voice.deaf or m.voice.self_deaf)) for m in voice.channel.members
+        )
+        if alone:
+            self._alone_since.setdefault(guild.id, time.monotonic())
+        else:
+            self._alone_since.pop(guild.id, None)
+
+    @tasks.loop(seconds=5)
+    async def _stop_when_alone(self) -> None:
+        limit = self.bot.config.player.alone_time_until_stop
+        for guild_id, since in list(self._alone_since.items()):
+            if time.monotonic() - since < limit:
+                continue
+            self._alone_since.pop(guild_id, None)
+            if player := self.find(guild_id):
+                log.info("Alone in voice for %ds in %s; stopping", limit, player.guild)
+                await player.stop()

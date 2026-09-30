@@ -1,14 +1,16 @@
 """The player's track-end logic, with a fake voice connection instead of Discord."""
 
 import asyncio
+import random
 from types import SimpleNamespace
 
 import pytest
 
 from pymusicbot.audio.player import GuildPlayer
-from pymusicbot.audio.sources import SourceError
+from pymusicbot.audio.sources import Resolved, SourceError
 from pymusicbot.audio.track import Requester, Track
 from pymusicbot.config import load_config
+from pymusicbot.playlists import PlaylistStore
 from pymusicbot.settings import RepeatMode, SettingsStore
 
 GUILD = 1
@@ -51,6 +53,12 @@ class FakeSources:
         if track.title in self.broken:
             raise SourceError("gone")
 
+    async def resolve_each(self, items, requester):
+        for index, item in enumerate(items):
+            # "album:a,b,c" stands for a folder entry that holds several songs
+            names = item.removeprefix("album:").split(",") if item.startswith("album:") else [item]
+            yield index, item, Resolved([track(name, requester=None) for name in names])
+
 
 class FakePlayer(GuildPlayer):
     fake_voice: FakeVoice
@@ -70,8 +78,11 @@ def player(tmp_path):
         config=config,
         settings=SettingsStore.load(tmp_path),
         sources=FakeSources(),
+        playlists=PlaylistStore(tmp_path / "Playlists"),
         on_track_change=lambda player: None,
         get_channel=lambda channel_id: None,
+        get_guild=lambda guild_id: None,
+        shutting_down=False,
         reply=lambda kind, text: text,
     )
     player = FakePlayer(bot, GUILD)
@@ -80,7 +91,19 @@ def player(tmp_path):
 
 
 def track(name, requester=1):
-    return Track(title=name, source=f"/music/{name}.mp3", duration=60, requester=Requester(requester, "user"), local=True)
+    return Track(
+        title=name,
+        source=f"/music/{name}.mp3",
+        duration=60,
+        requester=Requester(requester, "user") if requester else None,
+        local=True,
+    )
+
+
+def default_playlist(player, *items):
+    player.bot.playlists.folder.mkdir(exist_ok=True)
+    (player.bot.playlists.folder / "auto.txt").write_text("\n".join(items), encoding="utf-8")
+    player.bot.settings.update(GUILD, default_playlist="auto")
 
 
 async def settle():
@@ -184,5 +207,155 @@ def test_seek_keeps_the_track_playing(player):
         player.fake_voice.finish()  # the original play() call ending still advances
         await settle()
         assert playing(player) is None
+
+    run(scenario())
+
+
+def test_autoplay_when_queue_runs_out_and_requests_go_first(player):
+    async def scenario():
+        default_playlist(player, "x", "y")
+        await player.add(track("a"))
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) == "x"
+        assert player.current.requester is None
+        await player.add(track("b"))
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) == "b"  # a request plays before the rest of autoplay
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) == "y"
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) == "x"  # the default playlist loops
+        assert not player.fake_voice.disconnected
+
+    run(scenario())
+
+
+def test_autoplay_that_cannot_play_anything_gives_up(player):
+    async def scenario():
+        default_playlist(player, "x", "y")
+        player.bot.sources.broken.update({"x", "y"})
+        await player.add(track("a"))
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) is None
+        assert player.fake_voice.disconnected
+
+    run(scenario())
+
+
+def test_stop_clears_autoplay(player):
+    async def scenario():
+        default_playlist(player, "x", "y")
+        await player.add(track("a"))
+        player.fake_voice.finish()
+        await settle()
+        await player.stop()
+        await settle()
+        assert playing(player) is None
+        assert player.autoplay == []
+
+    run(scenario())
+
+
+def test_changing_the_default_playlist_applies_from_the_next_song(player):
+    async def scenario():
+        default_playlist(player, "x", "y")
+        await player.add(track("a"))
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) == "x"
+
+        (player.bot.playlists.folder / "other.txt").write_text("p\nq", encoding="utf-8")
+        player.bot.settings.update(GUILD, default_playlist="other")
+        await player.reload_autoplay()
+        assert playing(player) == "x"  # the current song finishes
+        player.fake_voice.finish()
+        await settle()
+        assert playing(player) == "p"
+
+    run(scenario())
+
+
+def test_new_default_playlist_starts_right_away_when_idle_in_voice(player):
+    async def scenario():
+        default_playlist(player, "x", "y")
+        await player.reload_autoplay()  # connected, nothing playing
+        await settle()
+        assert playing(player) == "x"
+
+    run(scenario())
+
+
+def play_through(player, count):
+    """Let `count` songs finish, returning the titles that played."""
+    async def go():
+        titles = []
+        for _ in range(count):
+            titles.append(playing(player))
+            player.fake_voice.finish()
+            await settle()
+        return titles
+    return go()
+
+
+def test_shuffle_mode_plays_every_song_once_per_pass_and_mixes_folders(player):
+    async def scenario():
+        random.seed(3)
+        default_playlist(player, "#shuffle", "album:a,b,c,d", "e", "album:f,g")
+        await player.reload_autoplay()
+        await settle()
+        first_pass = await play_through(player, 7)
+        second_pass = await play_through(player, 7)
+        assert sorted(first_pass) == sorted(second_pass) == list("abcdefg")
+        assert first_pass != list("abcdefg")
+        folder_positions = [first_pass.index(n) for n in "abcd"]
+        assert folder_positions != list(range(folder_positions[0], folder_positions[0] + 4))  # not kept together
+
+    run(scenario())
+
+
+def test_random_mode_picks_any_song_each_time(player):
+    async def scenario():
+        random.seed(5)
+        default_playlist(player, "#random", "album:a,b,c")
+        await player.reload_autoplay()
+        await settle()
+        titles = await play_through(player, 12)
+        assert set(titles) == {"a", "b", "c"}
+        # Unlike shuffle mode, a song can come back before the others have all played.
+        assert any(len(set(titles[i:i + 3])) < 3 for i in range(0, len(titles), 3))
+
+    run(scenario())
+
+
+def test_random_mode_drops_songs_that_fail(player):
+    async def scenario():
+        random.seed(1)
+        player.bot.sources.broken.add("bad")
+        default_playlist(player, "#random", "album:bad,good")
+        await player.reload_autoplay()
+        await settle()
+        titles = await play_through(player, 6)
+        assert set(titles) == {"good"}
+
+    run(scenario())
+
+
+def test_song_ending_during_shutdown_does_nothing(player):
+    async def scenario():
+        default_playlist(player, "x", "y")
+        await player.add(track("a"))
+        await player.add(track("b"))
+        player.bot.shutting_down = True
+        player.halt()
+        player.fake_voice.finish()  # discord.py leaving voice ends the song
+        await settle()
+        assert playing(player) is None
+        assert queued(player) == []
+        assert not player.fake_voice.disconnected  # disconnecting is left to discord.py
 
     run(scenario())

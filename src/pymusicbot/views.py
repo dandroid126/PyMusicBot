@@ -81,3 +81,30 @@ class PagedView(OwnedView):
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.index = (self.index + 1) % len(self.pages)
         await interaction.response.edit_message(embed=self.embed, view=self)
+
+
+class ConfirmView(OwnedView):
+    """One button that runs an action, like JMusicBot's "load the attached playlist" prompt.
+
+    On timeout the message goes back to `plain_content`, without the question and button.
+    """
+
+    def __init__(self, user_id: int, label: str, emoji: str, plain_content: str,
+                 on_confirm: Callable[[discord.Interaction], Awaitable[None]]):
+        super().__init__(user_id)
+        self.plain_content = plain_content
+        self.on_confirm = on_confirm
+        button = discord.ui.Button(label=label, emoji=emoji, style=discord.ButtonStyle.primary)
+        button.callback = self._confirmed
+        self.add_item(button)
+
+    async def _confirmed(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await self.on_confirm(interaction)
+
+    async def on_timeout(self) -> None:
+        if self.message is not None:
+            try:
+                await self.message.edit(content=self.plain_content, view=None)
+            except discord.HTTPException:
+                pass

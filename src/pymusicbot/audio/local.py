@@ -7,8 +7,10 @@ and collapses "..", so neither can be used to reach files outside them.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -62,6 +64,20 @@ class LocalLibrary:
         words = text.lower().split()
         return [entry for entry in entries if all(w in entry.lower() for w in words)][:limit]
 
+    async def suggest(self, text: str) -> str | None:
+        """The library path closest to `text`, ignoring case, spaces and punctuation."""
+        target = _squash(text)
+        if not target:
+            return None
+        keys: dict[str, str] = {}  # squashed path (files without extension) -> path
+        for entry in await self._entries():  # folders come first, so they win ties
+            keys.setdefault(_squash(entry if entry.endswith("/") else str(Path(entry).with_suffix(""))), entry)
+        for key, entry in keys.items():
+            if key.endswith(target):  # "DiamondDust" -> "Girls Band Cry/Diamond Dust/"
+                return entry
+        close = difflib.get_close_matches(target, list(keys), n=1, cutoff=0.6)
+        return keys[close[0]] if close else None
+
     async def _entries(self) -> list[str]:
         if time.monotonic() - self._indexed_at > INDEX_MAX_AGE:
             if self._indexing is None or self._indexing.done():
@@ -84,6 +100,10 @@ class LocalLibrary:
         self._index = sorted(dirs, key=str.lower) + sorted(files, key=str.lower)
         self._indexed_at = time.monotonic()
         log.debug("Indexed %d folders and %d files in the music library", len(dirs), len(files))
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.lower())
 
 
 def is_audio(path: Path) -> bool:

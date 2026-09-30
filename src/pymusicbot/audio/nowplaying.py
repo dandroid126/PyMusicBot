@@ -65,6 +65,9 @@ class NowPlayingMessages:
         if not self.bot.config.player.now_playing_images:
             self._refresh.start()
 
+    def stop(self) -> None:
+        self._refresh.cancel()
+
     def track(self, message: discord.Message) -> None:
         if message.guild:
             self._messages[message.guild.id] = message

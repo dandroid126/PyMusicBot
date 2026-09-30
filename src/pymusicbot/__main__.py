@@ -7,7 +7,7 @@ import sys
 
 import discord
 
-from . import __version__
+from . import __version__, shutdown
 from .bot import MusicBot
 from .config import ConfigError, load_config
 from .settings import SettingsError, SettingsStore
@@ -17,6 +17,7 @@ log = logging.getLogger("pymusicbot")
 
 def main() -> int:
     discord.utils.setup_logging(level=logging.INFO)
+    shutdown.install_early_handler()
     log.info("PyMusicBot %s starting", __version__)
 
     try:
@@ -38,6 +39,7 @@ def main() -> int:
     except discord.LoginFailure:
         log.error("Discord rejected the token. Check DISCORD_TOKEN in .env (it's the bot token, not the client secret).")
         return 2
+    log.info("Disconnected from Discord; exiting")
     return 0
 
 

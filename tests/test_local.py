@@ -61,3 +61,16 @@ def test_probe_falls_back_to_file_name(tmp_path):
     path = tmp_path / "Untagged Song.mp3"
     path.write_bytes(b"not audio")
     assert asyncio.run(probe(path)) == ("Untagged Song", None)
+
+
+@pytest.mark.parametrize(
+    ("typed", "suggested"),
+    [("DiamondDust", "Girls Band Cry/Diamond Dust/"), ("diamond dust", "Girls Band Cry/Diamond Dust/"),
+     ("cycle of sorrow", "Girls Band Cry/Diamond Dust/Cycle Of Sorrow.opus"), ("xyzzy", None)],
+)
+def test_suggest_close_library_paths(tmp_path, typed, suggested):
+    folder = tmp_path / "music" / "Girls Band Cry" / "Diamond Dust"
+    folder.mkdir(parents=True)
+    (folder / "Cycle Of Sorrow.opus").write_bytes(b"")
+    library = LocalLibrary((tmp_path / "music",))
+    assert asyncio.run(library.suggest(typed)) == suggested

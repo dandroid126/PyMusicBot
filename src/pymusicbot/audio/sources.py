@@ -6,24 +6,28 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 
 from ..config import Config
 from ..timeutil import parse_unit_time
-from .local import LocalLibrary, probe
+from .local import AUDIO_EXTENSIONS, LocalLibrary, probe
 from .track import Requester, Track
 
 log = logging.getLogger(__name__)
 
 STREAM_URL_MAX_AGE = 30 * 60  # seconds a fetched stream URL is reused before fetching a new one
 PROBE_CONCURRENCY = 8
+PLAYLIST_CONCURRENCY = 4  # playlist entries resolved at the same time
 
 # Prefer a continuous HTTP stream over HLS (m3u8) when a site offers both.
 _FORMAT = "bestaudio[protocol^=http]/bestaudio/best"
+SEARCH_PREFIX = "search:"  # marks playlist entries that are YouTube searches on purpose
 _YOUTUBE_TIMESTAMP = re.compile(r"youtu(?:\.be|be\..+)/.*\?.*(?!.*list=)t=([\dhms]+)")
 
 
@@ -48,8 +52,13 @@ class Sources:
         if query.startswith("<") and query.endswith(">"):  # Discord's no-embed link syntax
             query = query[1:-1]
 
-        if (path := self.library.resolve(query)) is not None:
+        if query.lower().startswith(SEARCH_PREFIX):
+            resolved = await self._online(f"ytsearch1:{query[len(SEARCH_PREFIX):].strip()}", requester)
+        elif (path := self.library.resolve(query)) is not None:
             resolved = await self._local(path, requester)
+        elif _looks_like_path(query):
+            # Don't search YouTube for a path, e.g. one left in a playlist from another machine.
+            raise SourceError(f"`{query}` isn't in the music library.")
         elif query.startswith(("http://", "https://")):
             resolved = await self._online(query, requester)
         else:
@@ -62,6 +71,27 @@ class Sources:
             resolved.too_long = [t for t in resolved.tracks if t.duration is not None and t.duration > limit]
             resolved.tracks = [t for t in resolved.tracks if t not in resolved.too_long]
         return resolved
+
+    async def resolve_each(
+        self, items: list[str], requester: Requester | None
+    ) -> AsyncIterator[tuple[int, str, Resolved | SourceError]]:
+        """Resolve several entries a few at a time, yielding results in the original order."""
+        semaphore = asyncio.Semaphore(PLAYLIST_CONCURRENCY)
+
+        async def one(item: str) -> Resolved | SourceError:
+            async with semaphore:
+                try:
+                    return await self.resolve(item, requester)
+                except SourceError as e:
+                    return e
+
+        tasks = [asyncio.create_task(one(item)) for item in items]
+        try:
+            for index, (item, task) in enumerate(zip(items, tasks)):
+                yield index, item, await task
+        finally:
+            for task in tasks:
+                task.cancel()
 
     async def search(self, query: str, site: str = "ytsearch", count: int = 5) -> list[Track]:
         """Search results for picking from, without a requester yet."""
@@ -159,6 +189,31 @@ def _track_from_info(info: dict[str, Any] | None, requester: Requester | None) -
         uploader=info.get("uploader") or info.get("channel"),
         thumbnail=info.get("thumbnail") or (thumbnails[-1].get("url") if thumbnails else None),
     )
+
+
+def attached_playlist(url: str) -> str | None:
+    """For a YouTube link to a video inside a playlist, the playlist's own URL."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if not (host == "youtu.be" or host.endswith("youtube.com")):
+        return None
+    query = parse_qs(parsed.query)
+    if "list" not in query or not ("v" in query or host == "youtu.be"):
+        return None
+    return f"https://www.youtube.com/playlist?list={query['list'][0]}"
+
+
+def youtube_video_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.hostname == "youtu.be":
+        return parsed.path.lstrip("/") or None
+    return (parse_qs(parsed.query).get("v") or [None])[0]
+
+
+def _looks_like_path(query: str) -> bool:
+    if query.startswith(("http://", "https://")):
+        return False
+    return query.startswith(("/", "./", "../", "~")) or Path(query).suffix.lower() in AUDIO_EXTENSIONS
 
 
 def _youtube_start(url: str) -> float:

@@ -11,14 +11,14 @@ from discord.ext import commands
 
 from ..audio.nowplaying import now_playing
 from ..audio.player import GuildPlayer
-from ..audio.sources import Resolved, SourceError
+from ..audio.sources import Resolved, SourceError, attached_playlist, youtube_video_id
 from ..audio.track import Requester, Track
 from ..bot import MusicBot
 from ..checks import Denied, is_dj
 from ..formatting import PAUSE_EMOJI, PLAY_EMOJI, linked_title, queue_line, title
 from ..settings import QueueType, RepeatMode
 from ..timeutil import format_time, parse_seek
-from ..views import PagedView, PickView
+from ..views import ConfirmView, PagedView, PickView
 
 log = logging.getLogger(__name__)
 
@@ -33,14 +33,16 @@ def requester_of(member: discord.Member | discord.User) -> Requester:
 
 
 def music_checks(
-    interaction: discord.Interaction[MusicBot], *, listening: bool = False, playing: bool = False
+    interaction: discord.Interaction[MusicBot], *, listening: bool = False, playing: bool = False, joining: bool = False
 ) -> tuple[GuildPlayer, VoiceChannel | None]:
-    """JMusicBot's MusicCommand rules. Returns the player and, with `listening`, the member's channel.
+    """JMusicBot's MusicCommand rules. Returns the player and, with `listening` or `joining`, the voice channel to use.
 
     - The server's music text channel (/settc), if set, is the only place music commands work.
     - `playing`: something must be playing.
     - `listening`: the member must be in voice, not deafened, not in the AFK channel, and in the
       bot's channel (or the /setvc channel when the bot isn't connected yet).
+    - `joining` (commands that add music): when a /setvc channel is configured, the bot plays
+      there and the member doesn't need to be in voice. Otherwise the same as `listening`.
     """
     bot, guild, member = interaction.client, interaction.guild, interaction.user
     settings = bot.settings.get(guild.id)
@@ -52,6 +54,18 @@ def music_checks(
         raise Denied("There must be music playing to use that!")
 
     channel = None
+    if joining:
+        configured = guild.get_channel(settings.voice_channel_id or 0)
+        if isinstance(configured, (discord.VoiceChannel, discord.StageChannel)):
+            voice = player.voice
+            if voice is None:
+                permissions = configured.permissions_for(guild.me)
+                if not (permissions.connect and permissions.speak):
+                    raise Denied(f"I am unable to connect to {configured.mention}!")
+            player.text_channel_id = interaction.channel_id
+            return player, voice.channel if voice else configured
+        listening = True  # no configured channel: play in the member's channel
+
     if listening:
         voice = player.voice
         current = voice.channel if voice else guild.get_channel(settings.voice_channel_id or 0)
@@ -69,34 +83,65 @@ def music_checks(
     return player, channel
 
 
+async def library_choices(bot: MusicBot, current: str) -> list[app_commands.Choice[str]]:
+    """Autocomplete suggestions from the music library for a query option."""
+    if current.startswith(("http://", "https://")):
+        return []
+    paths = await bot.library.search(current)
+    return [app_commands.Choice(name=p, value=p) for p in paths if len(p) <= 100]
+
+
 class Music(commands.Cog):
     def __init__(self, bot: MusicBot):
         self.bot = bot
 
     # Playing
 
-    @app_commands.command(description="Play a song, playlist, or file or folder from the music library")
+    @app_commands.command(description="Play a song, playlist, or library file or folder; with no query, resume or start autoplay")
     @app_commands.describe(query="A URL, a file or folder from the music library, or words to search YouTube for")
     @app_commands.guild_only()
     async def play(self, interaction: discord.Interaction[MusicBot], query: str | None = None) -> None:
         if not query:
             await self._resume_or_help(interaction)
             return
-        player, channel = music_checks(interaction, listening=True)
+        player, channel = music_checks(interaction, joining=True)
         await interaction.response.defer(thinking=True)
+        requester = requester_of(interaction.user)
         try:
-            resolved = await self.bot.sources.resolve(query, requester_of(interaction.user))
+            resolved = await self.bot.sources.resolve(query, requester)
         except SourceError as e:
             await interaction.followup.send(self.bot.reply("error", f"Couldn't load that: {discord.utils.escape_markdown(str(e))}"))
             return
-        await interaction.followup.send(await self._enqueue(player, channel, resolved))
+        added = await self._enqueue(player, channel, resolved)
+
+        playlist_url = attached_playlist(query.strip().removeprefix("<").removesuffix(">"))
+        if not (playlist_url and resolved.playlist_title is None and resolved.tracks and player.voice):
+            await interaction.followup.send(added)
+            return
+
+        first = resolved.tracks[0]
+
+        async def load_playlist(click: discord.Interaction) -> None:
+            await click.response.edit_message(content=added + "\n" + self.bot.reply("loading", "Loading the playlist..."), view=None)
+            try:
+                playlist = await self.bot.sources.resolve(playlist_url, requester)
+            except SourceError as e:
+                await click.edit_original_response(content=added + "\n" + self.bot.reply("error", f"Couldn't load the playlist: {e}"))
+                return
+            tracks = [t for t in playlist.tracks if youtube_video_id(t.source) != youtube_video_id(first.source)]
+            await player.add_many(tracks)
+            await click.edit_original_response(content=added + "\n" + self.bot.reply("success", f"Loaded **{len(tracks)}** additional tracks!"))
+
+        view = ConfirmView(interaction.user.id, "Load playlist", "📥", added, load_playlist)
+        view.message = await interaction.followup.send(
+            added + "\n" + self.bot.reply("warning", "This track is part of a playlist. Load the rest of it?"),
+            view=view,
+            wait=True,
+        )
 
     @play.autocomplete("query")
     async def play_autocomplete(self, interaction: discord.Interaction[MusicBot], current: str) -> list[app_commands.Choice[str]]:
-        if current.startswith(("http://", "https://")):
-            return []
-        paths = await self.bot.library.search(current)
-        return [app_commands.Choice(name=p, value=p) for p in paths if len(p) <= 100]
+        return await library_choices(self.bot, current)
 
     @app_commands.command(description="Search YouTube and pick a result to play")
     @app_commands.guild_only()
@@ -112,7 +157,7 @@ class Music(commands.Cog):
     @app_commands.describe(query="Words in the file or folder name")
     @app_commands.guild_only()
     async def local(self, interaction: discord.Interaction[MusicBot], query: str) -> None:
-        player, channel = music_checks(interaction, listening=True)
+        player, channel = music_checks(interaction, joining=True)
         paths = await self.bot.library.search(query)
         if not paths:
             await interaction.response.send_message(self.bot.reply("warning", f"Nothing in the music library matches `{query}`."))
@@ -297,17 +342,34 @@ class Music(commands.Cog):
             player.resume()
             await interaction.response.send_message(self.bot.reply("success", f"Resumed {title(player.current)}."))
             return
+
+        # Nothing playing: start the server's default playlist, e.g. after a /stop.
+        default = self.bot.settings.get(interaction.guild_id).default_playlist
+        if player.current is None and default and self.bot.playlists.load(default) is not None:
+            player, channel = music_checks(interaction, joining=True)
+            await interaction.response.defer(thinking=True)
+            try:
+                await player.connect(channel)
+            except (discord.ClientException, TimeoutError):
+                await interaction.followup.send(self.bot.reply("error", f"I couldn't connect to {channel.mention}."))
+                return
+            await player.reload_autoplay()
+            await interaction.followup.send(
+                self.bot.reply("success", f"Starting the default playlist **{default}** in {channel.mention}.")
+            )
+            return
+
         await interaction.response.send_message(
             self.bot.reply("warning", "Play commands:")
             + "\n`/play <song title>` - plays the first result from YouTube"
             + "\n`/play <URL>` - plays the song, playlist or stream"
             + "\n`/play <file or folder>` - plays from the music library (suggestions appear as you type)"
-            + "\n`/play` - resumes the player when it's paused",
+            + "\n`/play` - resumes the player when it's paused, or starts the default playlist when nothing is playing",
             ephemeral=True,
         )
 
     async def _search(self, interaction: discord.Interaction[MusicBot], query: str, site: str, site_name: str) -> None:
-        player, channel = music_checks(interaction, listening=True)
+        player, channel = music_checks(interaction, joining=True)
         await interaction.response.defer(thinking=True)
         try:
             results = await self.bot.sources.search(query, site)
