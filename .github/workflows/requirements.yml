@@ -1,0 +1,46 @@
+name: Requirements files
+
+# requirements.txt and requirements-test.txt are exported from uv.lock for people who install
+# with pip. On Dependabot PRs they're regenerated and committed here; on any other change a stale
+# file fails the check. Fix it locally with scripts/lock.sh.
+
+on:
+  pull_request:
+    paths: ["pyproject.toml", "uv.lock", "requirements*.txt", ".github/workflows/requirements.yml"]
+  push:
+    branches: [main]
+    paths: ["pyproject.toml", "uv.lock", "requirements*.txt", ".github/workflows/requirements.yml"]
+
+permissions:
+  contents: write  # to commit regenerated files to Dependabot's branch
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.28"  # the uv that generated uv.lock; update together
+      - name: uv.lock matches pyproject.toml
+        run: uv lock --locked
+      - name: Export the requirements files
+        run: |
+          uv export --quiet --format requirements-txt --no-emit-project --no-dev -o requirements.txt
+          uv export --quiet --format requirements-txt --no-emit-project --no-dev --extra test -o requirements-test.txt
+      - name: Commit them on Dependabot PRs, or fail if they're stale
+        run: |
+          if git diff --quiet -- requirements.txt requirements-test.txt; then
+            echo "Requirements files are up to date."
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "Regenerate requirements files from uv.lock"
+            git push
+          else
+            git diff --stat
+            echo "::error::requirements*.txt are out of date with uv.lock. Run scripts/lock.sh and commit the result."
+            exit 1
+          fi

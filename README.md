@@ -57,6 +57,17 @@ search on purpose. A server's default playlist
 - Move your `config.txt` values into `config/config.toml`. The comments in
   `config.example.toml` explain the new names; the token goes in `.env`.
 
+## Dependencies
+
+`pyproject.toml` lists the allowed version ranges. `uv.lock` pins the exact version and hash of
+every package; Docker and CI install from it. `requirements.txt` (and `requirements-test.txt`)
+are exported from the lock for installing with plain pip.
+
+- `scripts/lock.sh` re-syncs the requirements files after editing `pyproject.toml`.
+- `scripts/lock.sh --upgrade-package yt-dlp` updates yt-dlp when YouTube breaks it.
+- Dependabot opens a PR for each yt-dlp release (daily) and one grouped PR for everything else.
+  CI tests the new versions, and the requirements files are regenerated on the PR automatically.
+
 ## Tests
 
 `scripts/test.sh` runs the test suite in Docker.

@@ -6,21 +6,25 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# uv installs the exact versions pinned in uv.lock.
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+ENV UV_NO_CACHE=1
+
 WORKDIR /app
 
-# Install dependencies in their own layer so code changes don't reinstall them.
-COPY pyproject.toml ./
-RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']))" \
-        > /tmp/requirements.txt \
-    && pip install --no-cache-dir --root-user-action=ignore -r /tmp/requirements.txt
+# Dependencies get their own layer, so code changes don't reinstall them.
+COPY pyproject.toml uv.lock ./
+RUN uv export --locked --no-emit-project --no-dev > /tmp/requirements.txt \
+    && uv pip install --system --require-hashes -r /tmp/requirements.txt
 
 COPY README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir --root-user-action=ignore --no-deps .
+RUN uv pip install --system --no-deps .
 
 
 FROM base AS test
-RUN pip install --no-cache-dir --root-user-action=ignore pytest
+RUN uv export --locked --no-emit-project --no-dev --extra test > /tmp/requirements-test.txt \
+    && uv pip install --system --require-hashes -r /tmp/requirements-test.txt
 COPY config.example.toml ./
 COPY tests ./tests
 CMD ["pytest", "-q"]
