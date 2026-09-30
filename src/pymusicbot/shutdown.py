@@ -45,7 +45,10 @@ def install(loop: asyncio.AbstractEventLoop, close: Callable[[], Coroutine[Any, 
         loop.create_task(close())
 
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, request, sig)
+        try:
+            loop.add_signal_handler(sig, request, sig)
+        except NotImplementedError:  # Windows: a plain handler that hands over to the loop
+            signal.signal(sig, lambda signum, frame: loop.call_soon_threadsafe(request, signal.Signals(signum)))
 
 
 def _start_watchdog(loop: asyncio.AbstractEventLoop) -> None:

@@ -213,7 +213,9 @@ def youtube_video_id(url: str) -> str | None:
 def _looks_like_path(query: str) -> bool:
     if query.startswith(("http://", "https://")):
         return False
-    return query.startswith(("/", "./", "../", "~")) or Path(query).suffix.lower() in AUDIO_EXTENSIONS
+    if re.match(r"[A-Za-z]:[\\/]|\\\\", query):  # C:\Music or C:/Music, or \\server\share
+        return True
+    return query.startswith(("/", "./", "../", "~", ".\\", "..\\")) or Path(query).suffix.lower() in AUDIO_EXTENSIONS
 
 
 def _youtube_start(url: str) -> float:

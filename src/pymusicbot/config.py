@@ -6,6 +6,10 @@ Two sources, by who owns them:
 - Everything else comes from ``config.toml``, which the admin edits and the bot only reads.
   Every key is optional.
 
+Where things live: PYMUSICBOT_CONFIG (the config file), PYMUSICBOT_DATA (settings and playlists)
+and PYMUSICBOT_MUSIC (the default music folder). Without them the bot uses config.toml, data/ and
+music/ in the working directory; the Docker image sets them to /config, /data and /music.
+
 Relative paths in ``config.toml`` are resolved against the data directory.
 """
 
@@ -18,8 +22,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_PATH = "/config/config.toml"
-DEFAULT_DATA_DIR = "/data"
+DEFAULT_CONFIG_PATH = "config.toml"
+DEFAULT_DATA_DIR = "data"
+DEFAULT_MUSIC_DIR = "music"
 
 STATUSES = ("online", "idle", "dnd", "invisible")
 LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
@@ -48,7 +53,7 @@ class PlayerConfig:
 
 @dataclass(frozen=True)
 class FilesConfig:
-    music_folders: tuple[Path, ...] = (Path("/music"),)
+    music_folders: tuple[Path, ...] = (Path(DEFAULT_MUSIC_DIR),)
     playlists_folder: Path = Path("Playlists")
 
 
@@ -142,8 +147,12 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
             raise ConfigError(f"player.{key} can't be negative.")
 
     files_raw = sections["files"]
+    if "music_folders" in files_raw:
+        music_folders = tuple(data_dir / p for p in files_raw["music_folders"])
+    else:
+        music_folders = (Path(env.get("PYMUSICBOT_MUSIC", DEFAULT_MUSIC_DIR)),)
     files = FilesConfig(
-        music_folders=tuple(data_dir / p for p in files_raw.get("music_folders", ["/music"])),
+        music_folders=music_folders,
         playlists_folder=data_dir / files_raw.get("playlists_folder", "Playlists"),
     )
 

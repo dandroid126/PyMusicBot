@@ -7,7 +7,7 @@
 # Per-server settings (DJ role, channels, volume, ...) are changed with slash commands and
 # saved by the bot in data/settings.json.
 #
-# Relative paths are resolved against the data directory (/data in Docker).
+# Relative paths are resolved against the data directory (/data in Docker, ./data otherwise).
 #
 # Coming from JMusicBot's config.txt: the same settings, grouped into sections and renamed
 # with underscores. Not carried over: token (now in .env), prefix, altprefix, help and
@@ -44,7 +44,9 @@ now_playing_images = false
 
 [files]
 # Folders local files can be played from. Paths outside them are refused.
-music_folders = ["/music"]
+# Default: /music in Docker (mount your library there), ./music when running Python directly.
+# Windows paths work with forward slashes, e.g. "D:/Music".
+# music_folders = ["/music"]
 # Folder of playlist files (same plain-text format as JMusicBot).
 playlists_folder = "Playlists"
 

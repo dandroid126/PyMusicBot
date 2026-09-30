@@ -74,7 +74,8 @@ def test_youtube_video_id():
 @pytest.mark.parametrize(
     ("query", "expected"),
     [("/home/dan/Music/song.mp3", True), ("Album/song.flac", True), ("~/x", True), ("lofi beats", False),
-     ("https://example.com/song.mp3", False)],
+     ("https://example.com/song.mp3", False), ("C:\\Music\\Band", True), ("D:/Music", True),
+     ("\\\\nas\\music\\x", True), (".\\song", True)],
 )
 def test_looks_like_path(query, expected):
     assert _looks_like_path(query) is expected

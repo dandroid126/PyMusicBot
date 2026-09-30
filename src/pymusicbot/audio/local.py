@@ -46,7 +46,7 @@ class LocalLibrary:
         """The path as users type it: relative to its music folder."""
         for folder in self.folders:
             if path.is_relative_to(folder):
-                return str(path.relative_to(folder))
+                return path.relative_to(folder).as_posix()
         return path.name
 
     def audio_files(self, directory: Path) -> list[Path]:
@@ -92,7 +92,7 @@ class LocalLibrary:
             if not folder.is_dir():
                 continue
             for path in folder.rglob("*"):
-                relative = str(path.relative_to(folder))
+                relative = path.relative_to(folder).as_posix()
                 if path.is_dir():
                     dirs.append(relative + "/")
                 elif is_audio(path):

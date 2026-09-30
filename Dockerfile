@@ -33,6 +33,7 @@ RUN useradd --create-home --uid 1000 bot \
 USER bot
 ENV PYMUSICBOT_CONFIG=/config/config.toml \
     PYMUSICBOT_DATA=/data \
+    PYMUSICBOT_MUSIC=/music \
     PYTHONUNBUFFERED=1
 VOLUME ["/data"]
 CMD ["python", "-m", "pymusicbot"]

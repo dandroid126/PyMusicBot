@@ -6,7 +6,7 @@ import asyncio
 import io
 import logging
 import platform
-import resource
+import sys
 from typing import Literal
 
 import aiohttp
@@ -98,7 +98,7 @@ class Owner(commands.Cog):
         config = self.bot.config
         ffmpeg = await _first_line("ffmpeg", "-version")
         deno = await _first_line("deno", "--version")
-        memory_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        memory_mb = _peak_memory_mb()
         lines = [
             "PyMusicBot Information:",
             f"  Version = {__version__}",
@@ -119,7 +119,7 @@ class Owner(commands.Cog):
             f"  Deno = {deno}",
             "",
             "Runtime Information:",
-            f"  Peak Memory = {memory_mb:.0f} MB",
+            f"  Peak Memory = {f'{memory_mb:.0f} MB' if memory_mb is not None else 'unknown'}",
             f"  Active Players = {len(self.bot.players.active())}",
             "",
             "Discord Information:",
@@ -129,6 +129,37 @@ class Owner(commands.Cog):
         ]
         file = discord.File(io.BytesIO("\n".join(lines).encode()), filename="debug_information.txt")
         await interaction.response.send_message(file=file, ephemeral=True)
+
+
+def _peak_memory_mb() -> float | None:
+    """Peak memory of this process. The resource module is Unix-only; Windows asks the OS."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                (name, ctypes.c_size_t) for name in (
+                    "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
+                    "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage",
+                )
+            ]
+
+        # Declare the types: by default ctypes passes the process handle as a 32-bit int,
+        # which is wrong on 64-bit Windows and makes the call fail.
+        get_process = ctypes.windll.kernel32.GetCurrentProcess
+        get_process.restype = wintypes.HANDLE
+        get_info = ctypes.windll.psapi.GetProcessMemoryInfo
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        get_info.restype = wintypes.BOOL
+        counters = Counters(cb=ctypes.sizeof(Counters))
+        if not get_info(get_process(), ctypes.byref(counters), counters.cb):
+            return None
+        return counters.PeakWorkingSetSize / 1024 / 1024
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / 1024 / 1024 if sys.platform == "darwin" else peak / 1024  # macOS reports bytes, Linux KB
 
 
 async def _download_image(url: str) -> bytes:

@@ -23,8 +23,22 @@ def test_missing_file_uses_defaults(tmp_path):
     config = load_config(env_for(tmp_path))
     assert config.owner_id is None
     assert config.player == PlayerConfig()
-    assert config.files.music_folders == (Path("/music"),)
+    assert config.files.music_folders == (Path("music"),)  # in the working directory
     assert config.files.playlists_folder == tmp_path / "data" / "Playlists"
+
+
+def test_paths_default_to_the_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # an empty directory, so no stray config.toml is read
+    config = load_config({"DISCORD_TOKEN": "x"})
+    assert config.data_dir == Path("data")
+    assert config.files.music_folders == (Path("music"),)
+
+
+def test_docker_sets_the_default_music_folder(tmp_path):
+    config = load_config(env_for(tmp_path, PYMUSICBOT_MUSIC="/music"))
+    assert config.files.music_folders == (Path("/music"),)
+    configured = load_config(env_for(tmp_path, '[files]\nmusic_folders = ["/library"]', PYMUSICBOT_MUSIC="/music"))
+    assert configured.files.music_folders == (tmp_path / "data" / "/library",)  # the config file wins
 
 
 def test_example_file_is_valid_and_matches_defaults(tmp_path):
@@ -64,8 +78,9 @@ playlists_folder = "/lists"
     assert config.presence.song_in_status is True
     assert config.player.skip_ratio == 1.0
     assert config.player.max_track_length == 600
-    assert config.files.music_folders == (Path("/music"), tmp_path / "data" / "extra")
-    assert config.files.playlists_folder == Path("/lists")
+    data = tmp_path / "data"
+    assert config.files.music_folders == (data / "/music", data / "extra")  # absolute stays absolute
+    assert config.files.playlists_folder == data / "/lists"
 
 
 def test_owner_id_from_env_wins(tmp_path):
