@@ -1,18 +1,23 @@
 version: 2
 updates:
-  # Python packages pinned in requirements.txt and requirements-test.txt. yt-dlp is checked
-  # daily and gets its own PR, because YouTube changes often break older versions; everything
-  # else is grouped into one PR. CI installs each PR with pip, so an invalid bump fails there.
+  # Python packages pinned in requirements.txt. Only the packages we depend on directly get
+  # version PRs: Dependabot can't tell which of the 27 pins are ours, and bumping the others on
+  # their own breaks the versions our dependencies require (e.g. aiohttp needs multidict<7).
+  # Those move together when scripts/lock.sh --upgrade re-resolves everything. Security alerts
+  # are separate and still cover every package.
+  # yt-dlp is checked daily and gets its own PR, because YouTube changes often break old versions.
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: daily
+    allow:
+      - dependency-name: yt-dlp
+      - dependency-name: yt-dlp-ejs
+      - dependency-name: discord-py
+      - dependency-name: pytest
     groups:
       yt-dlp:
         patterns: ["yt-dlp", "yt-dlp-ejs"]
-      everything-else:
-        patterns: ["*"]
-        exclude-patterns: ["yt-dlp", "yt-dlp-ejs"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
