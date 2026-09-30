@@ -17,8 +17,11 @@ def library(tmp_path):
     (music / "single.ogg").write_bytes(b"")
     outside = tmp_path / "secret.mp3"
     outside.write_bytes(b"")
-    os.symlink(outside, music / "escape.mp3")
-    os.symlink(tmp_path, music / "escape-dir")
+    try:
+        os.symlink(outside, music / "escape.mp3")
+        os.symlink(tmp_path, music / "escape-dir", target_is_directory=True)
+    except OSError:
+        pass  # Windows without developer mode can't create symlinks; those cases are skipped
     return LocalLibrary((music,))
 
 
@@ -31,6 +34,8 @@ def test_resolve_files_and_folders(library):
 
 @pytest.mark.parametrize("query", ["", "../secret.mp3", "/etc/passwd", "escape.mp3", "escape-dir", "Album/cover.jpg", "missing.mp3"])
 def test_resolve_refuses(library, query):
+    if query.startswith("escape") and not (library.folders[0] / query).is_symlink():
+        pytest.skip("symlinks can't be created here")
     assert library.resolve(query) is None
 
 

@@ -24,3 +24,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Inside discord.py (utils.escape_markdown), not our code.
+    "ignore:'count' is passed as positional argument:DeprecationWarning:discord",
+]

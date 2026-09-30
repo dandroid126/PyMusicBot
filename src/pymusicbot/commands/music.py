@@ -12,7 +12,7 @@ from discord.ext import commands
 from ..audio.nowplaying import now_playing
 from ..audio.player import GuildPlayer
 from ..audio.sources import Resolved, SourceError, attached_playlist, youtube_video_id
-from ..audio.track import Requester, Track
+from ..audio.track import Requester
 from ..bot import MusicBot
 from ..checks import Denied, is_dj
 from ..formatting import PAUSE_EMOJI, PLAY_EMOJI, linked_title, queue_line, title
