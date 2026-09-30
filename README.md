@@ -4,8 +4,11 @@ A self-hosted Discord music bot that plays online sources and your own local mus
 It's a Python rewrite of [JMusicBot](https://github.com/jagrosh/MusicBot) by John Grosh,
 which stopped working when Discord made voice encryption (DAVE) mandatory in March 2026.
 
-Status: Phase 3 (full command set). Everything from JMusicBot that was kept is in place;
-Phase 4 is hardening and deployment.
+Status: Phase 4 (testing and deployment). Everything from JMusicBot that was kept is in place.
+
+**To run the bot, follow [the deployment guide](docs/deployment.md).** It covers Docker
+Compose, `docker run`, Docker Desktop on Windows, and Python on Windows (`start.bat`) or Linux,
+plus updating, backups and moving from JMusicBot.
 
 ## Commands
 
@@ -34,28 +37,10 @@ search on purpose. A server's default playlist
 
 | File | Written by | Holds |
 | --- | --- | --- |
-| `.env` | you | Secrets: `DISCORD_TOKEN`, optionally `OWNER_ID` and `MUSIC_DIR` |
+| `.env` | you | `DISCORD_TOKEN`, and optionally `MUSIC_DIR` (your music folder) and `OWNER_ID` |
 | `config/config.toml` | you | Bot behavior; the bot only reads it |
 | `data/settings.json` | the bot | Per-server settings changed with slash commands |
 | `data/Playlists/` | you or the bot | Playlist files, same format as JMusicBot |
-
-## Setup
-
-1. Create a Discord application at https://discord.com/developers/applications and turn
-   off **Public Bot**.
-2. `cp .env.example .env` and set `DISCORD_TOKEN`. Set `MUSIC_DIR` to your music folder.
-3. `cp config.example.toml config/config.toml` and adjust it. Every setting is optional.
-4. `docker compose up --build`
-5. If the bot isn't in a server yet, the log prints an invite link with the right scopes
-   (`bot` and `applications.commands`) and permissions.
-
-## Moving from JMusicBot
-
-- Copy `serversettings.json` into `data/`. On first start it's converted into
-  `data/settings.json`. The old file is left as it was and isn't read again.
-- Copy your `Playlists` folder into `data/`.
-- Move your `config.txt` values into `config/config.toml`. The comments in
-  `config.example.toml` explain the new names; the token goes in `.env`.
 
 ## Dependencies
 
@@ -67,8 +52,10 @@ Linux on Python 3.12 or newer. It's the one source of truth: server owners insta
 - `scripts/lock.sh` regenerates the file after editing `pyproject.toml` (needs
   [uv](https://docs.astral.sh/uv/); only maintainers need it).
 - `scripts/lock.sh --upgrade-package yt-dlp` updates yt-dlp when YouTube breaks it.
-- Dependabot opens a PR for each yt-dlp release (checked daily) and one grouped PR for
-  everything else. CI installs and tests every PR on Linux and Windows.
+- Dependabot opens PRs for new versions of yt-dlp (checked daily), discord.py and pytest. The
+  other packages, including Deno (the JavaScript runtime yt-dlp needs, installed from PyPI),
+  move together with `scripts/lock.sh --upgrade`. CI installs and tests every PR on Linux and
+  Windows, including the guide's install steps and `start.bat`.
 
 ## Tests
 

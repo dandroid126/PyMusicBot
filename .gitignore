@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 
 # Instance files: each deployment has its own.
+compose.override.yaml
 config/*
 !config/.gitkeep
 data/*

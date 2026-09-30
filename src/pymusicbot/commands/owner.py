@@ -16,6 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from .. import __version__
+from ..audio.sources import deno_path
 from ..bot import MusicBot
 from ..checks import Denied, owner_only
 from ..presence import STATUSES, parse_activity
@@ -97,7 +98,7 @@ class Owner(commands.Cog):
     async def debug(self, interaction: discord.Interaction[MusicBot]) -> None:
         config = self.bot.config
         ffmpeg = await _first_line("ffmpeg", "-version")
-        deno = await _first_line("deno", "--version")
+        deno = await _first_line(deno_path() or "deno", "--version")
         memory_mb = _peak_memory_mb()
         lines = [
             "PyMusicBot Information:",

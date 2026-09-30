@@ -1,7 +1,7 @@
 FROM python:3.14-slim AS base
 
-# Deno is the JavaScript runtime yt-dlp needs for YouTube; FFmpeg decodes and encodes audio.
-COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+# FFmpeg decodes and encodes audio. Deno, which yt-dlp needs for YouTube, comes from
+# requirements.txt.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*

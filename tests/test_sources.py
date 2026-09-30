@@ -176,3 +176,39 @@ def test_search_returns_several_results_without_requester(make_sources):
     sources = make_sources({"scsearch5:lofi": {"_type": "playlist", "entries": [video(str(i)) for i in range(5)]}})
     results = run(sources.search("lofi", "scsearch"))
     assert len(results) == 5 and all(t.requester is None for t in results)
+
+
+def test_yt_dlp_is_given_the_deno_from_requirements(make_sources, monkeypatch):
+    seen = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            seen.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, query, download):
+            return video("a")
+
+        def sanitize_info(self, info):
+            return info
+
+    monkeypatch.setattr(sources_module.yt_dlp, "YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr(sources_module.deno, "find_deno_bin", lambda: "/venv/bin/deno")
+    sources = make_sources({})
+    del sources._extract  # use the real one, with the fake yt-dlp
+    run(sources.resolve("https://www.youtube.com/watch?v=a", ME))
+    assert seen["js_runtimes"] == {"deno": {"path": "/venv/bin/deno"}}
+
+
+def test_deno_on_path_is_the_fallback(monkeypatch):
+    def missing():
+        raise FileNotFoundError("deno")
+
+    monkeypatch.setattr(sources_module.deno, "find_deno_bin", missing)
+    monkeypatch.setattr(sources_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert sources_module.deno_path() == "/usr/bin/deno"

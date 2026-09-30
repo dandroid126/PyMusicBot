@@ -1,14 +1,15 @@
 """Bot configuration.
 
 Two sources, by who owns them:
-- Secrets come from environment variables (``.env`` under Docker): ``DISCORD_TOKEN``, and
-  optionally ``OWNER_ID``.
+- Secrets come from environment variables: ``DISCORD_TOKEN``, and optionally ``OWNER_ID``.
+  They're usually kept in ``.env``, which Docker Compose reads, and which the bot reads itself
+  when it runs without Docker (see ``load_env_file``).
 - Everything else comes from ``config.toml``, which the admin edits and the bot only reads.
   Every key is optional.
 
 Where things live: PYMUSICBOT_CONFIG (the config file), PYMUSICBOT_DATA (settings and playlists)
-and PYMUSICBOT_MUSIC (the default music folder). Without them the bot uses config.toml, data/ and
-music/ in the working directory; the Docker image sets them to /config, /data and /music.
+and PYMUSICBOT_MUSIC (the default music folder, else MUSIC_DIR from .env). Without them the bot
+uses config/config.toml, data/ and music/ in the working directory; the Docker image sets them to /config, /data and /music.
 
 Relative paths in ``config.toml`` are resolved against the data directory.
 """
@@ -22,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_PATH = "config.toml"
+DEFAULT_CONFIG_PATH = "config/config.toml"
 DEFAULT_DATA_DIR = "data"
 DEFAULT_MUSIC_DIR = "music"
 
@@ -96,6 +97,31 @@ _SECTIONS: dict[str, dict[str, type]] = {
 _TYPE_NAMES = {bool: "true or false", int: "a whole number", float: "a number", str: "a string", list: "a list of strings"}
 
 
+def load_env_file(path: Path = Path(".env"), environ: dict[str, str] | None = None) -> None:
+    """Put the NAME=value lines of a .env file into the environment, for running without Docker.
+
+    Variables that are already set win, like with Docker Compose. Blank lines and # comments are
+    skipped, and quotes around a value are removed. A missing file is fine.
+    """
+    env = os.environ if environ is None else environ
+    try:
+        # utf-8-sig: Notepad may start the file with a byte order mark.
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except FileNotFoundError:
+        return
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, sep, value = line.removeprefix("export ").partition("=")
+        name, value = name.strip(), value.strip()
+        if not sep or not name:
+            raise ConfigError(f"{path} line {number} should look like NAME=value, got {line!r}.")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        env.setdefault(name, value)
+
+
 def load_config(environ: dict[str, str] | None = None) -> Config:
     """Load config.toml and the environment. Raises ConfigError with a readable message."""
     env = os.environ if environ is None else environ
@@ -150,7 +176,10 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
     if "music_folders" in files_raw:
         music_folders = tuple(data_dir / p for p in files_raw["music_folders"])
     else:
-        music_folders = (Path(env.get("PYMUSICBOT_MUSIC", DEFAULT_MUSIC_DIR)),)
+        # MUSIC_DIR is the host folder in .env. Docker mounts it at /music and sets
+        # PYMUSICBOT_MUSIC to that; without Docker the bot uses MUSIC_DIR itself.
+        music = env.get("PYMUSICBOT_MUSIC") or env.get("MUSIC_DIR", "").strip() or DEFAULT_MUSIC_DIR
+        music_folders = (Path(music),)
     files = FilesConfig(
         music_folders=music_folders,
         playlists_folder=data_dir / files_raw.get("playlists_folder", "Playlists"),

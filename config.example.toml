@@ -44,8 +44,9 @@ now_playing_images = false
 
 [files]
 # Folders local files can be played from. Paths outside them are refused.
-# Default: /music in Docker (mount your library there), ./music when running Python directly.
-# Windows paths work with forward slashes, e.g. "D:/Music".
+# Default: the MUSIC_DIR folder from .env (in Docker it's mounted at /music), else ./music.
+# Set this only for more than one folder. In Docker, list the paths inside the container and
+# mount each one in compose.yaml. Windows paths work with forward slashes, e.g. "D:/Music".
 # music_folders = ["/music"]
 # Folder of playlist files (same plain-text format as JMusicBot).
 playlists_folder = "Playlists"

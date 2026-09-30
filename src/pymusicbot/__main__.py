@@ -9,7 +9,7 @@ import discord
 
 from . import __version__, shutdown
 from .bot import MusicBot
-from .config import ConfigError, load_config
+from .config import ConfigError, load_config, load_env_file
 from .settings import SettingsError, SettingsStore
 
 log = logging.getLogger("pymusicbot")
@@ -21,6 +21,7 @@ def main() -> int:
     log.info("PyMusicBot %s starting", __version__)
 
     try:
+        load_env_file()
         config = load_config()
     except ConfigError as e:
         log.error("Config error: %s", e)

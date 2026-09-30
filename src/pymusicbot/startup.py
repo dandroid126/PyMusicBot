@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from .audio.sources import deno_path
+
 if TYPE_CHECKING:
     from .bot import MusicBot
 
@@ -46,9 +48,11 @@ async def run_startup_checks(bot: MusicBot) -> None:
     owner = f"user {bot.owner_id}" if bot.owner_id else f"application owner {app.owner or app.team}"
     log.info("Bot owner: %s", owner)
 
-    for program in ("ffmpeg", "ffprobe", "deno"):
+    for program in ("ffmpeg", "ffprobe"):
         if shutil.which(program) is None:
             log.warning("%s wasn't found; playback won't work without it", program)
+    if deno_path() is None:
+        log.warning("Deno wasn't found; YouTube won't play without it. Reinstall requirements.txt")
 
     files = bot.config.files
     for folder in files.music_folders:

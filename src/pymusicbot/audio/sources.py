@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shutil
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import deno
 import yt_dlp
 
 from ..config import Config
@@ -29,6 +31,16 @@ PLAYLIST_CONCURRENCY = 4  # playlist entries resolved at the same time
 _FORMAT = "bestaudio[protocol^=http]/bestaudio/best"
 SEARCH_PREFIX = "search:"  # marks playlist entries that are YouTube searches on purpose
 _YOUTUBE_TIMESTAMP = re.compile(r"youtu(?:\.be|be\..+)/.*\?.*(?!.*list=)t=([\dhms]+)")
+
+
+def deno_path() -> str | None:
+    """The Deno executable yt-dlp runs YouTube's JavaScript with: the one installed by the deno
+    package, else one on PATH. Passed to yt-dlp directly, because the virtual environment's
+    scripts folder (where pip puts it) isn't on PATH unless the environment is activated."""
+    try:
+        return deno.find_deno_bin()
+    except FileNotFoundError:
+        return shutil.which("deno")
 
 
 class SourceError(Exception):
@@ -157,6 +169,8 @@ class Sources:
             "format": _FORMAT,
             "playlistend": self.config.player.max_playlist_tracks or None,
         }
+        if deno := deno_path():
+            options["js_runtimes"] = {"deno": {"path": deno}}
         if flat:
             options["extract_flat"] = "in_playlist"  # list playlist entries without extracting each one
 

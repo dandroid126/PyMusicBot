@@ -1,3 +1,6 @@
+# A fixed name, so an updated copy in another folder replaces this container.
+name: pymusicbot
+
 services:
   pymusicbot:
     build:

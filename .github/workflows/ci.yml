@@ -35,7 +35,9 @@ jobs:
       - run: python -m pytest -q
 
   pip-install:
-    # Server owners install with plain pip; make sure that keeps working too.
+    # Server owners install with plain pip, following docs/deployment.md (start.bat on Windows).
+    # Each run ends with the bot logging in with a fake token read from .env, which Discord
+    # refuses (exit code 2): the install worked, .env was read, and the bot started.
     name: pip install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -47,9 +49,28 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - run: python -m pip install --require-hashes -r requirements.txt
-      - run: python -m pip install --no-deps .
-      - run: python -m pip check
+      - run: echo "DISCORD_TOKEN=not-a-real-token" > .env
+        shell: bash
+      - name: Install and start as in the guide (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --require-hashes -r requirements.txt
+          .venv/bin/pip install --no-deps -e .
+          .venv/bin/pip check
+          code=0; .venv/bin/python -m pymusicbot > out.txt 2>&1 || code=$?
+          cat out.txt
+          grep -q "Discord rejected the token" out.txt && [ "$code" = 2 ]
+      - name: Install and start with start.bat (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmd /c "start.bat > out.txt 2>&1"
+          $code = $LASTEXITCODE
+          Get-Content out.txt
+          .venv\Scripts\python.exe -m pip check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ($code -ne 2 -or -not (Select-String -Path out.txt -Pattern "Discord rejected the token" -Quiet)) { exit 1 }
+          exit 0
 
   docker:
     name: Docker image

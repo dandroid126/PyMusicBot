@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from pymusicbot.config import ConfigError, PlayerConfig, load_config
+from pymusicbot.config import ConfigError, PlayerConfig, load_config, load_env_file
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "config.example.toml"
 
@@ -32,6 +32,21 @@ def test_paths_default_to_the_working_directory(tmp_path, monkeypatch):
     config = load_config({"DISCORD_TOKEN": "x"})
     assert config.data_dir == Path("data")
     assert config.files.music_folders == (Path("music"),)
+
+
+def test_config_file_defaults_to_the_config_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "config.toml").write_text("owner_id = 5", encoding="utf-8")
+    assert load_config({"DISCORD_TOKEN": "x"}).owner_id == 5
+
+
+def test_music_dir_from_env_file_is_the_default_music_folder(tmp_path):
+    config = load_config(env_for(tmp_path, MUSIC_DIR="D:/Music"))
+    assert config.files.music_folders == (Path("D:/Music"),)
+    # In Docker MUSIC_DIR is the host path; the image's /music wins.
+    docker = load_config(env_for(tmp_path, MUSIC_DIR="/srv/music", PYMUSICBOT_MUSIC="/music"))
+    assert docker.files.music_folders == (Path("/music"),)
 
 
 def test_docker_sets_the_default_music_folder(tmp_path):
@@ -106,3 +121,29 @@ def test_owner_id_from_env_wins(tmp_path):
 def test_invalid_config(tmp_path, toml, message):
     with pytest.raises(ConfigError, match=message):
         load_config(env_for(tmp_path, toml))
+
+
+def test_env_file_is_read_without_overriding_the_environment(tmp_path):
+    env_file = tmp_path / ".env"
+    # A byte order mark, like Notepad may write, and the formats .env.example shows.
+    env_file.write_text(
+        "\ufeff# comment\n\nDISCORD_TOKEN = abc.def\n# OWNER_ID=\nMUSIC_DIR=\"D:/My Music\"\n"
+        "export OWNER_ID='42'\nLOG=\n",
+        encoding="utf-8",
+    )
+    env = {"OWNER_ID": "7"}
+    load_env_file(env_file, env)
+    assert env == {"DISCORD_TOKEN": "abc.def", "MUSIC_DIR": "D:/My Music", "OWNER_ID": "7", "LOG": ""}
+
+
+def test_missing_env_file_is_fine(tmp_path):
+    env = {}
+    load_env_file(tmp_path / ".env", env)
+    assert env == {}
+
+
+def test_malformed_env_file_line(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("DISCORD_TOKEN abc\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"line 1 should look like NAME=value"):
+        load_env_file(env_file, {})
