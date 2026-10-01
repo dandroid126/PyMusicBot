@@ -1,12 +1,11 @@
-# A fixed name, so an updated copy in another folder replaces this container.
+# PyMusicBot with Docker Compose. Setup and updating: docs/deployment.md.
+# A fixed name, so a copy in another folder replaces this container instead of adding one.
 name: pymusicbot
 
 services:
   pymusicbot:
-    build:
-      context: .
-      target: runtime
-    image: pymusicbot
+    # Published by CI from main after the tests pass.
+    image: ghcr.io/dandroid126/pymusicbot:latest
     env_file: .env
     volumes:
       # config.toml, read-only: the bot never writes to it.

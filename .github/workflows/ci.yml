@@ -83,3 +83,27 @@ jobs:
           docker run --rm pymusicbot-test
       - name: Build the runtime image
         run: docker build --target runtime -t pymusicbot .
+
+  publish:
+    # The image server owners pull (docs/deployment.md). Published from main only, and only
+    # after everything above passed: latest, plus a tag per commit to go back to if needed.
+    name: Publish image
+    needs: [tests, pip-install, docker]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/pymusicbot
+    steps:
+      - uses: actions/checkout@v7
+      - run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push
+        run: |
+          sha=sha-${GITHUB_SHA::7}
+          docker build --target runtime \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            -t "$IMAGE:latest" -t "$IMAGE:$sha" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$sha"

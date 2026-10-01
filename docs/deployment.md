@@ -12,8 +12,9 @@ There are four ways to run the bot. Pick one:
 | [Python on Windows](#python-on-windows) | A Windows PC, the simplest setup | Python, FFmpeg |
 | [Python on Linux](#python-on-linux) | A Linux machine without Docker | Python, FFmpeg |
 
-Everything else the bot needs comes with it. Docker users who prefer plain `docker run` over
-Compose: see [docker run](#docker-run).
+Everything else the bot needs comes with it. With Docker you download a ready-made image and
+two small files, not the bot's code. Docker users who prefer plain `docker run` over Compose:
+see [docker run](#docker-run).
 
 Contents: [Create the bot in Discord](#1-create-the-bot-in-discord) ·
 [The files you edit](#2-the-files-you-edit) · [Start the bot](#3-start-the-bot) ·
@@ -57,8 +58,11 @@ MUSIC_DIR=/srv/music
   only play online music. On Windows, write it with forward slashes: `MUSIC_DIR=D:/Music`.
 - Write values without quotes.
 
-You don't need `config/config.toml` to get started. Every setting has a default; see
-`config.example.toml` for what you can change.
+You don't need `config/config.toml` to get started. Every setting has a default. To change
+one, save
+[`config.example.toml`](https://github.com/dandroid126/PyMusicBot/blob/main/config.example.toml)
+as `config/config.toml` and edit it; its comments explain each setting. Restart the bot
+afterwards.
 
 The bot writes its own files to `data/`: `settings.json` (what `/setdj`, `/volume` and other
 commands change) and `Playlists/`. Keep that folder when you update.
@@ -69,27 +73,31 @@ Follow the section for the way you picked.
 
 ### Docker Compose (Linux server)
 
+You don't need the bot's code: Docker downloads the ready-made image.
+
 1. Install Docker Engine by following
    [Docker's instructions for your distribution](https://docs.docker.com/engine/install/).
    Compose comes with it.
-2. Get the bot and go into its folder:
+2. Make a folder for the bot, with `config` and `data` folders in it, and download the two
+   files it needs:
 
    ```sh
-   git clone https://github.com/dandroid126/PyMusicBot.git
-   cd PyMusicBot
+   mkdir -p pymusicbot/config pymusicbot/data
+   cd pymusicbot
+   curl -fsSLO https://raw.githubusercontent.com/dandroid126/PyMusicBot/main/compose.yaml
+   curl -fsSL https://raw.githubusercontent.com/dandroid126/PyMusicBot/main/.env.example -o .env
    ```
 
-3. Create `.env` and fill it in (step 2). `nano` saves with Ctrl+O and quits with Ctrl+X.
+3. Fill in `.env` (step 2). `nano` saves with Ctrl+O and quits with Ctrl+X.
 
    ```sh
-   cp .env.example .env
    nano .env
    ```
 
-4. Build and start the bot in the background:
+4. Download the image and start the bot in the background:
 
    ```sh
-   docker compose up -d --build
+   docker compose up -d
    ```
 
 5. Watch the log (Ctrl+C stops watching, not the bot):
@@ -116,20 +124,21 @@ services:
 ```
 
 Then run `docker compose up -d`. From then on, `/shutdown` restarts the bot instead of stopping
-it; stop it with `docker compose stop`.
+it; stop it with `docker compose stop`. Put any other changes to `compose.yaml` in this file
+too, so updating `compose.yaml` doesn't undo them.
 
 ### docker run
 
-For Docker without Compose. From the bot's folder, after creating `.env`:
+For Docker without Compose. Make the folders and `.env` as in steps 2 and 3 of Docker Compose
+(you don't need `compose.yaml`), then, from that folder:
 
 ```sh
-docker build -t pymusicbot .
 docker run -d --name pymusicbot --restart on-failure \
   --env-file .env \
   -v "$PWD/config:/config:ro" \
   -v "$PWD/data:/data" \
   -v /srv/music:/music:ro \
-  pymusicbot
+  ghcr.io/dandroid126/pymusicbot:latest
 ```
 
 Replace `/srv/music` with your music folder. `MUSIC_DIR` in `.env` isn't used here; the `-v`
@@ -141,22 +150,26 @@ the reboot behavior).
 
 1. Install [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
    and start it once.
-2. On the [PyMusicBot GitHub page](https://github.com/dandroid126/PyMusicBot), click
-   **Code**, then **Download ZIP**. Extract it; you get a folder named `PyMusicBot-main`,
-   which you can move anywhere.
-3. Open that folder in File Explorer, click the address bar, type `cmd` and press Enter. A
-   command window opens in the folder.
-4. Create `.env` and fill it in (step 2), then save and close Notepad:
+2. Make a folder for the bot, such as `C:\PyMusicBot`. Open it in File Explorer, click the
+   address bar, type `cmd` and press Enter. A command window opens in the folder.
+3. Make the `config` and `data` folders and download the two files the bot needs:
 
    ```bat
-   copy .env.example .env
+   mkdir config data
+   curl -fsSLO https://raw.githubusercontent.com/dandroid126/PyMusicBot/main/compose.yaml
+   curl -fsSL https://raw.githubusercontent.com/dandroid126/PyMusicBot/main/.env.example -o .env
+   ```
+
+4. Fill in `.env` (step 2), then save and close Notepad:
+
+   ```bat
    notepad .env
    ```
 
-5. Build and start the bot:
+5. Download the image and start the bot:
 
    ```bat
-   docker compose up -d --build
+   docker compose up -d
    ```
 
 The bot now shows under **Containers** in Docker Desktop, with its log and Start and Stop
@@ -267,11 +280,9 @@ kept.
 
 | Way | How to update |
 | --- | --- |
-| Docker Compose | `git pull`, then `docker compose up -d --build` |
-| docker run | `git pull`, `docker build -t pymusicbot .`, `docker rm -f pymusicbot`, then the `docker run` command again |
-| Downloaded ZIP (Windows) | Stop the bot. Download and extract the new ZIP, copy `.env`, `config` and `data` from the old folder into the new one, and use the new folder from now on. |
-| Docker Desktop | As for the ZIP, then `docker compose up -d --build` in the new folder |
-| Python on Windows | As for the ZIP, then double-click `start.bat`; it installs what changed |
+| Docker Compose, Docker Desktop | In the bot's folder: download `compose.yaml` again (the `curl -fsSLO` line from setup), then `docker compose pull` and `docker compose up -d` |
+| docker run | `docker pull ghcr.io/dandroid126/pymusicbot:latest`, `docker rm -f pymusicbot`, then the `docker run` command again |
+| Python on Windows | Stop the bot. Download and extract the new ZIP, copy `.env`, `config` and `data` from the old folder into the new one, and double-click `start.bat` in the new folder; it installs what changed. Use the new folder from now on. |
 | Python on Linux | `git pull`, `.venv/bin/pip install --require-hashes -r requirements.txt`, then restart the bot (`sudo systemctl restart pymusicbot`) |
 
 ## Backups

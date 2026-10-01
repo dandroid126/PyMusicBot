@@ -57,6 +57,16 @@ Linux on Python 3.12 or newer. It's the one source of truth: server owners insta
   move together with `scripts/lock.sh --upgrade`. CI installs and tests every PR on Linux and
   Windows, including the guide's install steps and `start.bat`.
 
+## Docker image
+
+CI publishes the image to `ghcr.io/dandroid126/pymusicbot` on every push to `main` once all
+tests pass: `latest`, plus `sha-<commit>` for each commit. `compose.yaml` pulls it. To run
+your own checkout instead, build it with the development override:
+
+```sh
+docker compose -f compose.yaml -f compose.dev.yaml up --build
+```
+
 ## Tests
 
 `scripts/test.sh` runs the test suite in Docker.
