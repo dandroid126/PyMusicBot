@@ -103,7 +103,7 @@ class Owner(commands.Cog):
         lines = [
             "PyMusicBot Information:",
             f"  Version = {__version__}",
-            f"  Owner = {self.bot.owner_id or 'application owner'}",
+            f"  Owners = {', '.join(map(str, config.owner_ids)) or 'application owner'}",
             f"  MaxTrackLength = {config.player.max_track_length}",
             f"  NowPlayingImages = {config.player.now_playing_images}",
             f"  SongInStatus = {config.presence.song_in_status}",

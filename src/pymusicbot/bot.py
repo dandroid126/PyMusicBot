@@ -40,7 +40,8 @@ class MusicBot(commands.Bot):
             command_prefix=commands.when_mentioned,
             intents=discord.Intents.default(),
             help_command=None,
-            owner_id=config.owner_id,
+            # Empty: discord.py asks Discord for the application's owner.
+            owner_ids=set(config.owner_ids),
             status=STATUSES[config.presence.status],
             activity=parse_activity(config.presence.game),
             # Track titles and requester mentions are shown, never pinged.

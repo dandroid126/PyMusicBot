@@ -21,7 +21,7 @@ def env_for(tmp_path, toml: str | None = None, **extra) -> dict[str, str]:
 
 def test_missing_file_uses_defaults(tmp_path):
     config = load_config(env_for(tmp_path))
-    assert config.owner_id is None
+    assert config.owner_ids == ()  # the application owner
     assert config.player == PlayerConfig()
     assert config.files.music_folders == (Path("music"),)  # in the working directory
     assert config.files.playlists_folder == tmp_path / "data" / "Playlists"
@@ -38,7 +38,7 @@ def test_config_file_defaults_to_the_config_folder(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "config.toml").write_text("owner_id = 5", encoding="utf-8")
-    assert load_config({"DISCORD_TOKEN": "x"}).owner_id == 5
+    assert load_config({"DISCORD_TOKEN": "x"}).owner_ids == (5,)
 
 
 def test_music_dir_from_env_file_is_the_default_music_folder(tmp_path):
@@ -87,7 +87,7 @@ max_track_length = 600
 music_folders = ["/music", "extra"]
 playlists_folder = "/lists"
 """))
-    assert config.owner_id == 42
+    assert config.owner_ids == (42,)
     assert config.log_level == "debug"
     assert config.presence.status == "dnd"
     assert config.presence.song_in_status is True
@@ -99,7 +99,25 @@ playlists_folder = "/lists"
 
 
 def test_owner_id_from_env_wins(tmp_path):
-    assert load_config(env_for(tmp_path, "owner_id = 1", OWNER_ID="2")).owner_id == 2
+    assert load_config(env_for(tmp_path, "owner_ids = [1, 3]", OWNER_ID="2")).owner_ids == (2,)
+
+
+@pytest.mark.parametrize("key", ["owner_id", "owner_ids"])
+def test_owner_id_and_owner_ids_both_take_one_id_or_a_list(tmp_path, key):
+    assert load_config(env_for(tmp_path, f"{key} = 4")).owner_ids == (4,)
+    assert load_config(env_for(tmp_path, f"{key} = [4]")).owner_ids == (4,)
+    assert load_config(env_for(tmp_path, f"{key} = [4, 5, 4]")).owner_ids == (4, 5)  # without duplicates
+
+
+def test_owner_id_and_owner_ids_together_are_refused(tmp_path):
+    with pytest.raises(ConfigError, match="Set owner_id or owner_ids, not both"):
+        load_config(env_for(tmp_path, "owner_id = 1\nowner_ids = [2]"))
+
+
+def test_several_owners_from_env(tmp_path):
+    assert load_config(env_for(tmp_path, OWNER_ID="1, 2,")).owner_ids == (1, 2)
+    with pytest.raises(ConfigError, match="separated by commas"):
+        load_config(env_for(tmp_path, OWNER_ID="1, me"))
 
 
 @pytest.mark.parametrize(
@@ -114,7 +132,12 @@ def test_owner_id_from_env_wins(tmp_path):
         ("[files]\nmusic_folders = '/music'", "must be a list of strings"),
         ("player = 1", "must be a table"),
         ("log_level = 'loud'", "log_level must be one of"),
-        ("owner_id = 0", "owner_id must be a Discord user ID"),
+        ("owner_id = 0", "must be Discord user IDs"),
+        ("owner_ids = [1, 0]", "must be Discord user IDs"),
+        ("owner_ids = ['123']", "owner_ids must be a Discord user ID or a list of them"),
+        ("owner_id = '123'", "owner_id must be a Discord user ID or a list of them"),
+        ("owner_id = true", "owner_id must be a Discord user ID or a list of them"),
+        ("owner_ids = [true]", "owner_ids must be a Discord user ID or a list of them"),
         ("[sources]\nallowed_sites = ['https://youtube.com']", "site names like"),
         ("[sources]\nallowed_sites = ['']", "site names like"),
         ("this is not toml", "not valid TOML"),

@@ -268,12 +268,14 @@ async def make_bot(tmp_path: Path, config_toml: str = "") -> MusicBot:
     if "[files]" not in config_toml:
         config_toml += f'\n[files]\nmusic_folders = ["{music.as_posix()}"]\n'
     (tmp_path / "config.toml").write_text(config_toml, encoding="utf-8")
-    config = load_config({
+    env = {
         "DISCORD_TOKEN": "token",
-        "OWNER_ID": str(OWNER_ID),
         "PYMUSICBOT_CONFIG": str(tmp_path / "config.toml"),
         "PYMUSICBOT_DATA": str(tmp_path / "data"),
-    })
+    }
+    if "owner_id" not in config_toml:  # OWNER_ID would replace the owners a test configures
+        env["OWNER_ID"] = str(OWNER_ID)
+    config = load_config(env)
     bot = MusicBot(config, SettingsStore.load(config.data_dir))
     bot._connection.user = SimpleNamespace(id=BOT_ID, name="PyMusicBot")
     for extension in EXTENSIONS:

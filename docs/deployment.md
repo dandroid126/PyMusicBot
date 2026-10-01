@@ -35,7 +35,9 @@ Every copy of PyMusicBot logs in as its own Discord bot, which you create once:
    safe for the next step. Anyone with the token controls your bot; if it leaks, reset it here.
 
 The bot needs no privileged intents, so leave those switches off. You're the bot's owner (the
-one who can use owner commands) because you own the application.
+one who can use owner commands) because you own the application. To have more than one owner,
+list everyone's Discord user ID in `owner_id` in `config/config.toml`, e.g.
+`owner_id = [123, 456]` (see `config.example.toml`).
 
 Coming from JMusicBot? You can reuse its application and token, and skip this step.
 
@@ -165,6 +167,10 @@ again with `docker compose up -d`. To change that, pick one:
   `sudo systemctl enable --now pymusicbot`, and from then on start and stop the bot with
   `sudo systemctl start pymusicbot` and `sudo systemctl stop pymusicbot`. The log is in
   `journalctl -u pymusicbot -f`.
+
+**More than one bot on one machine:** give each bot its own folder (with its own `.env`,
+`config` and `data`) and its own name, by adding a line like `COMPOSE_PROJECT_NAME=my_bot` to
+each `.env`. Without it, every copy is named `pymusicbot`, and starting one replaces the other.
 
 Put any other changes to `compose.yaml` in `compose.override.yaml` too, so downloading a new
 `compose.yaml` when you update doesn't undo them.

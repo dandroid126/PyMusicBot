@@ -45,8 +45,11 @@ async def run_startup_checks(bot: MusicBot) -> None:
             "https://discord.com/developers/applications/%s/bot",
             app.id,
         )
-    owner = f"user {bot.owner_id}" if bot.owner_id else f"application owner {app.owner or app.team}"
-    log.info("Bot owner: %s", owner)
+    owners = bot.config.owner_ids
+    if owners:
+        log.info("Bot owner%s: %s", "s" if len(owners) > 1 else "", ", ".join(f"user {o}" for o in owners))
+    else:
+        log.info("Bot owner: application owner %s", app.owner or app.team)
 
     for program in ("ffmpeg", "ffprobe"):
         if shutil.which(program) is None:

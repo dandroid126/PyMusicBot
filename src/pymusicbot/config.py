@@ -1,7 +1,8 @@
 """Bot configuration.
 
 Two sources, by who owns them:
-- Secrets come from environment variables: ``DISCORD_TOKEN``, and optionally ``OWNER_ID``.
+- Secrets come from environment variables: ``DISCORD_TOKEN``, and optionally ``OWNER_ID`` (one
+  or more IDs, separated by commas).
   They're usually kept in ``.env``, which Docker Compose reads, and which the bot reads itself
   when it runs without Docker (see ``load_env_file``).
 - Everything else comes from ``config.toml``, which the admin edits and the bot only reads.
@@ -81,7 +82,7 @@ class EmojiConfig:
 @dataclass(frozen=True)
 class Config:
     token: str = field(repr=False)
-    owner_id: int | None
+    owner_ids: tuple[int, ...]  # empty: the Discord application's owner
     data_dir: Path
     log_level: str = "info"
     presence: PresenceConfig = PresenceConfig()
@@ -91,8 +92,9 @@ class Config:
     emoji: EmojiConfig = EmojiConfig()
 
 
-# Allowed keys and their TOML types, per table. `list` means a list of strings.
-_TOP_LEVEL = {"owner_id": int, "log_level": str}
+# Allowed keys and their TOML types, per table. `list` means a list of strings, `tuple` a whole
+# number or a list of them. owner_ids is another name for owner_id.
+_TOP_LEVEL = {"owner_id": tuple, "owner_ids": tuple, "log_level": str}
 _SECTIONS: dict[str, dict[str, type]] = {
     "presence": {"game": str, "status": str, "song_in_status": bool},
     "player": {
@@ -107,7 +109,14 @@ _SECTIONS: dict[str, dict[str, type]] = {
     "sources": {"allowed_sites": list},
     "emoji": {"success": str, "warning": str, "error": str, "loading": str, "searching": str},
 }
-_TYPE_NAMES = {bool: "true or false", int: "a whole number", float: "a number", str: "a string", list: "a list of strings"}
+_TYPE_NAMES = {
+    bool: "true or false",
+    int: "a whole number",
+    float: "a number",
+    str: "a string",
+    list: "a list of strings",
+    tuple: "a Discord user ID or a list of them, e.g. 123 or [123, 456]",
+}
 
 
 def load_env_file(path: Path = Path(".env"), environ: dict[str, str] | None = None) -> None:
@@ -162,14 +171,21 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
         _reject_unknown(table, set(spec), f"{name}.")
         sections[name] = _take(table, spec, f"{name}.")
 
-    owner_id = top.get("owner_id")
+    # owner_id or owner_ids (the same setting under two names): one ID or a list. OWNER_ID in .env
+    # replaces it.
+    if "owner_id" in top and "owner_ids" in top:
+        raise ConfigError("Set owner_id or owner_ids, not both. They're the same setting: one Discord user ID or a list.")
+    owners = top.get("owner_id", top.get("owner_ids", []))
+    owner_ids = owners if isinstance(owners, list) else [owners]
     if env.get("OWNER_ID", "").strip():
         try:
-            owner_id = int(env["OWNER_ID"])
+            owner_ids = [int(part) for part in env["OWNER_ID"].split(",") if part.strip()]
         except ValueError:
-            raise ConfigError(f"OWNER_ID must be a Discord user ID (a number), got {env['OWNER_ID']!r}.") from None
-    if owner_id is not None and owner_id <= 0:
-        raise ConfigError("owner_id must be a Discord user ID. Remove it to use the application owner.")
+            raise ConfigError(
+                f"OWNER_ID must be Discord user IDs (numbers, separated by commas), got {env['OWNER_ID']!r}."
+            ) from None
+    if any(owner <= 0 for owner in owner_ids):
+        raise ConfigError("owner_id must be Discord user IDs. Remove it to use the application owner.")
 
     log_level = top.get("log_level", "info").lower()
     if log_level not in LOG_LEVELS:
@@ -204,7 +220,7 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
 
     return Config(
         token=token,
-        owner_id=owner_id,
+        owner_ids=tuple(dict.fromkeys(owner_ids)),  # without duplicates, in order
         data_dir=data_dir,
         log_level=log_level,
         presence=presence,
@@ -251,10 +267,13 @@ def _take(table: dict[str, Any], spec: dict[str, type], prefix: str) -> dict[str
         value = table[key]
         if kind is float and isinstance(value, int) and not isinstance(value, bool):
             value = float(value)
-        valid = (
-            all(isinstance(v, str) for v in value) if kind is list and isinstance(value, list)
-            else isinstance(value, kind) and not (kind is int and isinstance(value, bool))
-        )
+        if kind is list:
+            valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
+        elif kind is tuple:
+            items = value if isinstance(value, list) else [value]
+            valid = all(isinstance(v, int) and not isinstance(v, bool) for v in items)
+        else:
+            valid = isinstance(value, kind) and not (kind is int and isinstance(value, bool))
         if not valid:
             raise ConfigError(f"{prefix}{key} must be {_TYPE_NAMES[kind]}, got {value!r}.")
         values[key] = value

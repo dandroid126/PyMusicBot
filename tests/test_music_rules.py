@@ -152,3 +152,16 @@ def test_everyone_can_use_the_basic_commands(make_world):
             assert "Only" not in result.last and "permission" not in result.last, path
 
     run(scenario())
+
+
+def test_every_listed_owner_can_use_owner_commands(make_world):
+    async def scenario():
+        world = await make_world("owner_ids = [10, 11]")
+        for owner in (10, 11):
+            result = await world.invoke("debug", world.user(owner))
+            report = result.sent[-1]["file"].fp.read().decode()
+            assert "Owners = 10, 11" in report, owner
+        other = await world.invoke("debug", world.user(12))
+        assert "Only the bot owner" in other.last
+
+    run(scenario())
