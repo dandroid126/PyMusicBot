@@ -19,8 +19,9 @@ plus updating, backups and moving from JMusicBot.
 | Admins (Manage Server) | `/setdj`, `/settc`, `/setvc`, `/setskip`, `/queuetype` |
 | Owner | `/playlist create`, `/playlist append`, `/playlist remove`, `/playlist shuffle`, `/playlist delete`, `/autoplaylist`, `/setgame`, `/setstatus`, `/setname`, `/setavatar`, `/debug`, `/shutdown` |
 
-`/play` takes a URL, words to search YouTube for, or a file or folder from the music library
-(suggestions appear as you type). A folder queues every audio file in it.
+`/play` takes a link (YouTube, SoundCloud and Bandcamp by default; other sites are refused unless
+`allowed_sites` in `config.toml` lists them), words to search YouTube for, or a file or folder
+from the music library (suggestions appear as you type). A folder queues every audio file in it.
 
 ## Playlists
 

@@ -108,24 +108,66 @@ You don't need the bot's code: Docker downloads the ready-made image.
 
 Stop the bot with `docker compose stop` and start it again with `docker compose start`.
 
-The bot runs as user ID 1000 inside the container. It must be able to write to `data/` and read
-your music folder. If your own user ID isn't 1000 (check with `id -u`), give the data folder to
-that user: `sudo chown -R 1000:1000 data`. Network shares (NFS, SMB) must let that user read
-the music.
+The bot runs as user ID 1000 inside the container, never as root. It must be able to write to
+`data/` and read your music. If the log says `Permission denied` for `/data`, which happens when
+your own user ID isn't 1000 (check with `id -u`) or with rootless Docker or Podman, hand the
+folder to the bot by running this in the bot's folder (with Podman, write `podman` instead of
+`docker`):
 
-**After a reboot** the bot stays off until you run `docker compose up -d` again. That's
-deliberate, so that `/shutdown` really stops it. To have it start by itself after reboots,
-create a file named `compose.override.yaml` next to `compose.yaml` with:
-
-```yaml
-services:
-  pymusicbot:
-    restart: unless-stopped
+```sh
+docker run --rm --user 0 -v "$PWD/data:/data" --entrypoint chown ghcr.io/dandroid126/pymusicbot -R 1000:1000 /data
 ```
 
-Then run `docker compose up -d`. From then on, `/shutdown` restarts the bot instead of stopping
-it; stop it with `docker compose stop`. Put any other changes to `compose.yaml` in this file
-too, so updating `compose.yaml` doesn't undo them.
+Your music must be readable by everyone, which is the usual setting. On a network share (NFS,
+SMB), the share must allow that too.
+
+**The bot doesn't restart by itself**: not after `/shutdown`, a crash or a reboot. Start it
+again with `docker compose up -d`. To change that, pick one:
+
+- **Restart after crashes:** create a file named `compose.override.yaml` next to
+  `compose.yaml` with the lines below, then run `docker compose up -d`. A setup error, such as
+  a wrong token, then makes Docker restart the bot over and over until you fix it.
+
+  ```yaml
+  services:
+    pymusicbot:
+      restart: on-failure
+  ```
+
+  With `restart: unless-stopped` instead, the bot also comes back after reboots, and
+  `/shutdown` restarts it instead of stopping it; stop it with `docker compose stop`.
+- **A systemd service** starts the bot with the server and restarts it after crashes, but not
+  after `/shutdown` or a setup error. Create `/etc/systemd/system/pymusicbot.service`
+  (`sudo nano /etc/systemd/system/pymusicbot.service`), with the bot's folder as
+  `WorkingDirectory`:
+
+  ```ini
+  [Unit]
+  Description=PyMusicBot
+  Requires=docker.service
+  After=docker.service network-online.target
+  Wants=network-online.target
+
+  [Service]
+  WorkingDirectory=/home/yourname/pymusicbot
+  ExecStart=/usr/bin/docker compose up --exit-code-from pymusicbot
+  ExecStop=/usr/bin/docker compose stop
+  # Restart after a crash, but not after /shutdown or a setup error (exit code 2).
+  Restart=on-failure
+  RestartPreventExitStatus=2
+  RestartSec=10
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+
+  Then turn it on with `sudo systemctl daemon-reload` and
+  `sudo systemctl enable --now pymusicbot`, and from then on start and stop the bot with
+  `sudo systemctl start pymusicbot` and `sudo systemctl stop pymusicbot`. The log is in
+  `journalctl -u pymusicbot -f`.
+
+Put any other changes to `compose.yaml` in `compose.override.yaml` too, so downloading a new
+`compose.yaml` when you update doesn't undo them.
 
 ### docker run
 
@@ -133,7 +175,8 @@ For Docker without Compose. Make the folders and `.env` as in steps 2 and 3 of D
 (you don't need `compose.yaml`), then, from that folder:
 
 ```sh
-docker run -d --name pymusicbot --restart on-failure \
+docker run -d --name pymusicbot \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
   --env-file .env \
   -v "$PWD/config:/config:ro" \
   -v "$PWD/data:/data" \
@@ -142,9 +185,10 @@ docker run -d --name pymusicbot --restart on-failure \
 ```
 
 Replace `/srv/music` with your music folder. `MUSIC_DIR` in `.env` isn't used here; the `-v`
-line mounts the music instead. See the log with `docker logs -f pymusicbot`. The notes on user
-ID 1000 and reboots under Docker Compose apply here too (use `--restart unless-stopped` for
-the reboot behavior).
+line mounts the music instead. The second line locks the container down the same way
+`compose.yaml` does. See the log with `docker logs -f pymusicbot`. The notes on permissions
+and restarts under Docker Compose apply here too: add `--restart on-failure` or
+`--restart unless-stopped` to the first line for the same behavior.
 
 ### Docker Desktop on Windows
 
@@ -173,8 +217,9 @@ the reboot behavior).
    ```
 
 The bot now shows under **Containers** in Docker Desktop, with its log and Start and Stop
-buttons. After a restart of Windows, start it again with the Start button (or see the note on
-reboots under [Docker Compose](#docker-compose-linux-server)).
+buttons. The bot doesn't restart by itself, including after a restart of Windows: start it
+again with the Start button. The note on restarts under
+[Docker Compose](#docker-compose-linux-server) explains how to change that.
 
 ### Python on Windows
 
@@ -280,7 +325,7 @@ kept.
 
 | Way | How to update |
 | --- | --- |
-| Docker Compose, Docker Desktop | In the bot's folder: download `compose.yaml` again (the `curl -fsSLO` line from setup), then `docker compose pull` and `docker compose up -d` |
+| Docker Compose, Docker Desktop | In the bot's folder: download `compose.yaml` again (the `curl -fsSLO` line from setup), then `docker compose pull` and `docker compose up -d` (with the systemd service: `sudo systemctl restart pymusicbot` instead of `up -d`) |
 | docker run | `docker pull ghcr.io/dandroid126/pymusicbot:latest`, `docker rm -f pymusicbot`, then the `docker run` command again |
 | Python on Windows | Stop the bot. Download and extract the new ZIP, copy `.env`, `config` and `data` from the old folder into the new one, and double-click `start.bat` in the new folder; it installs what changed. Use the new folder from now on. |
 | Python on Linux | `git pull`, `.venv/bin/pip install --require-hashes -r requirements.txt`, then restart the bot (`sudo systemctl restart pymusicbot`) |
@@ -315,8 +360,9 @@ container's **Logs** tab (Docker Desktop), the `start.bat` window (Python on Win
 | `ffmpeg wasn't found` | Install FFmpeg (see your way in step 3), then open a new window or restart the service. Docker already has it. |
 | `Deno wasn't found` | Reinstall the requirements. On Windows, delete the `.venv` folder and run `start.bat` again. |
 | `Music folder ... doesn't exist` | Check `MUSIC_DIR` in `.env`. With `docker run`, check the `-v ...:/music:ro` line. |
-| `Permission denied` for `data/` (Docker on Linux) | `sudo chown -R 1000:1000 data` in the bot's folder. |
+| `Permission denied` for `/data` (Docker on Linux) | Run the `chown` command under [Docker Compose](#docker-compose-linux-server). |
 | `Python 3.12 or newer wasn't found` (`start.bat`) | Install Python (step 3), close the window, and double-click `start.bat` again. |
 | `'Public Bot' is on` | Turn it off (step 1, points 3 and 4). Until then, anyone with the bot's ID can add it to their server. |
+| `Links can only be played from ...` | Links from other sites are refused on purpose, so nobody can make the bot load other pages, such as ones on your own network. To allow another site, add it to `allowed_sites` in `config/config.toml` (see `config.example.toml`); it works only if yt-dlp supports that site. |
 | Online songs fail to load | Update PyMusicBot (see [Updating](#updating)). Sites like YouTube change often, and each update brings the fixes. |
 | Slash commands are missing | Press Ctrl+R in Discord. Commands also need the bot invited with the `applications.commands` scope: in the Developer Portal, open **OAuth2**, tick `bot` and `applications.commands` under **OAuth2 URL Generator**, and open the link it makes. |

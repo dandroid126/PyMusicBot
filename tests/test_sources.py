@@ -178,12 +178,14 @@ def test_search_returns_several_results_without_requester(make_sources):
     assert len(results) == 5 and all(t.requester is None for t in results)
 
 
-def test_yt_dlp_is_given_the_deno_from_requirements(make_sources, monkeypatch):
-    seen = {}
+@pytest.fixture
+def real_extract(make_sources, monkeypatch):
+    """Sources with the real _extract, over a fake yt-dlp that records the options it got."""
+    seen = []
 
     class FakeYoutubeDL:
         def __init__(self, options):
-            seen.update(options)
+            seen.append(options)
 
         def __enter__(self):
             return self
@@ -198,11 +200,70 @@ def test_yt_dlp_is_given_the_deno_from_requirements(make_sources, monkeypatch):
             return info
 
     monkeypatch.setattr(sources_module.yt_dlp, "YoutubeDL", FakeYoutubeDL)
+
+    def factory(config_toml=""):
+        sources = make_sources({}, config_toml)
+        del sources._extract  # back to the real one, with the fake yt-dlp
+        return sources, seen
+
+    return factory
+
+
+def test_yt_dlp_is_given_the_deno_from_requirements(real_extract, monkeypatch):
     monkeypatch.setattr(sources_module.deno, "find_deno_bin", lambda: "/venv/bin/deno")
-    sources = make_sources({})
-    del sources._extract  # use the real one, with the fake yt-dlp
+    sources, seen = real_extract()
     run(sources.resolve("https://www.youtube.com/watch?v=a", ME))
-    assert seen["js_runtimes"] == {"deno": {"path": "/venv/bin/deno"}}
+    assert seen[0]["js_runtimes"] == {"deno": {"path": "/venv/bin/deno"}}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=a",
+        "https://music.youtube.com/watch?v=a",
+        "https://youtu.be/a",
+        "https://soundcloud.com/artist/song",
+        "https://artist.bandcamp.com/track/song",
+        "http://YouTube.com/watch?v=a",
+    ],
+)
+def test_links_to_allowed_sites_play(real_extract, url):
+    sources, seen = real_extract()
+    run(sources.resolve(url, ME))
+    assert seen[0]["allowed_extractors"] == ["default", "-generic"]  # no generic web page loading
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/song.mp3",
+        "http://192.168.1.1/admin",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://localhost:8080/",
+        "https://youtube.com.example.com/watch?v=a",  # only real subdomains count
+        "https://notyoutube.com/watch?v=a",
+        "https://youtube.com@example.com/",  # the host here is example.com
+        "https://vimeo.com/56015672",
+    ],
+)
+def test_links_to_other_sites_are_refused_before_loading(real_extract, url):
+    sources, seen = real_extract()
+    with pytest.raises(SourceError, match="Links can only be played from youtube.com"):
+        run(sources.resolve(url, ME))
+    assert seen == []  # yt-dlp never ran
+
+
+def test_searches_still_work_with_the_allowlist(real_extract):
+    sources, seen = real_extract()
+    run(sources.resolve("lofi beats", ME))
+    assert len(seen) == 1
+
+
+def test_owners_can_change_the_allowed_sites(real_extract):
+    sources, seen = real_extract('[sources]\nallowed_sites = ["www.Vimeo.com"]')
+    run(sources.resolve("https://player.vimeo.com/video/1", ME))
+    with pytest.raises(SourceError, match="only be played from vimeo.com"):
+        run(sources.resolve("https://www.youtube.com/watch?v=a", ME))
 
 
 def test_deno_on_path_is_the_fallback(monkeypatch):

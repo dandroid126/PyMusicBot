@@ -161,13 +161,24 @@ class Sources:
             track.stream_fetched_at = time.monotonic()
         return Resolved([track])
 
+    def check_site(self, url: str) -> None:
+        """Refuse links to sites that aren't in sources.allowed_sites."""
+        host = (urlparse(url).hostname or "").lower()
+        allowed = self.config.sources.allowed_sites
+        if not any(host == site or host.endswith(f".{site}") for site in allowed):
+            raise SourceError(f"Links can only be played from {', '.join(allowed)}.")
+
     async def _extract(self, query: str, flat: bool = True) -> dict[str, Any]:
+        if query.startswith(("http://", "https://")):
+            self.check_site(query)
         options = {
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
             "format": _FORMAT,
             "playlistend": self.config.player.max_playlist_tracks or None,
+            # Only site-specific extractors; the generic one would load any web page.
+            "allowed_extractors": ["default", "-generic"],
         }
         if deno := deno_path():
             options["js_runtimes"] = {"deno": {"path": deno}}

@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, so the published image gets Debian's and FFmpeg's security fixes even when nothing
+  # was merged. It reruns all the tests first. Also startable by hand in the Actions tab.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -87,9 +92,10 @@ jobs:
   publish:
     # The image server owners pull (docs/deployment.md). Published from main only, and only
     # after everything above passed: latest, plus a tag per commit to go back to if needed.
+    # No third-party actions in this job: it can push images, so it runs only GitHub's own code.
     name: Publish image
     needs: [tests, pip-install, docker]
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -102,7 +108,7 @@ jobs:
       - name: Build and push
         run: |
           sha=sha-${GITHUB_SHA::7}
-          docker build --target runtime \
+          docker build --pull --target runtime \
             --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
             -t "$IMAGE:latest" -t "$IMAGE:$sha" .
           docker push "$IMAGE:latest"

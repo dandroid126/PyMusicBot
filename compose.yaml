@@ -14,5 +14,16 @@ services:
       - ./data:/data
       # Your music library, read-only. Set MUSIC_DIR in .env to point at it.
       - ${MUSIC_DIR:-./music}:/music:ro
-    # /shutdown exits cleanly and stays stopped; crashes are restarted.
-    restart: on-failure
+    # No automatic restarts by default: the bot stays stopped after /shutdown, a crash, a setup
+    # error or a reboot. To restart it after crashes, uncomment the line below. A setup error
+    # such as a wrong token then restarts it over and over until fixed. For a bot that comes
+    # back after reboots, see docs/deployment.md.
+    # restart: on-failure
+    # Hardening: the bot needs no special privileges, and writes only to /data and /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

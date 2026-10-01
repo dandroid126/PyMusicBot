@@ -51,6 +51,12 @@ now_playing_images = false
 # Folder of playlist files (same plain-text format as JMusicBot).
 playlists_folder = "Playlists"
 
+[sources]
+# Sites links can be played from (their subdomains count too). Links to anything else are
+# refused, so nobody can make the bot load other pages, e.g. on your own network. A site works
+# only if yt-dlp supports it directly; links to plain audio files aren't played.
+allowed_sites = ["youtube.com", "youtu.be", "soundcloud.com", "bandcamp.com"]
+
 [emoji]
 success = "🎶"
 warning = "💡"

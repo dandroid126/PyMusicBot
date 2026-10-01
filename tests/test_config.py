@@ -115,6 +115,8 @@ def test_owner_id_from_env_wins(tmp_path):
         ("player = 1", "must be a table"),
         ("log_level = 'loud'", "log_level must be one of"),
         ("owner_id = 0", "owner_id must be a Discord user ID"),
+        ("[sources]\nallowed_sites = ['https://youtube.com']", "site names like"),
+        ("[sources]\nallowed_sites = ['']", "site names like"),
         ("this is not toml", "not valid TOML"),
     ],
 )
@@ -147,3 +149,9 @@ def test_malformed_env_file_line(tmp_path):
     env_file.write_text("DISCORD_TOKEN abc\n", encoding="utf-8")
     with pytest.raises(ConfigError, match=r"line 1 should look like NAME=value"):
         load_env_file(env_file, {})
+
+
+def test_token_is_removed_from_the_environment(tmp_path):
+    env = env_for(tmp_path)
+    assert load_config(env).token == "token"
+    assert "DISCORD_TOKEN" not in env  # not passed on to FFmpeg or Deno

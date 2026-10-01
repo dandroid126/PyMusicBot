@@ -58,6 +58,17 @@ class FilesConfig:
     playlists_folder: Path = Path("Playlists")
 
 
+# Sites links can be played from; a site's subdomains count too. Each needs its own yt-dlp
+# extractor: links to any other page are refused, so users can't make the bot fetch arbitrary
+# addresses, such as ones on the server's own network.
+DEFAULT_ALLOWED_SITES = ("youtube.com", "youtu.be", "soundcloud.com", "bandcamp.com")
+
+
+@dataclass(frozen=True)
+class SourcesConfig:
+    allowed_sites: tuple[str, ...] = DEFAULT_ALLOWED_SITES
+
+
 @dataclass(frozen=True)
 class EmojiConfig:
     success: str = "🎶"
@@ -76,6 +87,7 @@ class Config:
     presence: PresenceConfig = PresenceConfig()
     player: PlayerConfig = PlayerConfig()
     files: FilesConfig = FilesConfig()
+    sources: SourcesConfig = SourcesConfig()
     emoji: EmojiConfig = EmojiConfig()
 
 
@@ -92,6 +104,7 @@ _SECTIONS: dict[str, dict[str, type]] = {
         "now_playing_images": bool,
     },
     "files": {"music_folders": list, "playlists_folder": str},
+    "sources": {"allowed_sites": list},
     "emoji": {"success": str, "warning": str, "error": str, "loading": str, "searching": str},
 }
 _TYPE_NAMES = {bool: "true or false", int: "a whole number", float: "a number", str: "a string", list: "a list of strings"}
@@ -123,12 +136,16 @@ def load_env_file(path: Path = Path(".env"), environ: dict[str, str] | None = No
 
 
 def load_config(environ: dict[str, str] | None = None) -> Config:
-    """Load config.toml and the environment. Raises ConfigError with a readable message."""
+    """Load config.toml and the environment. Raises ConfigError with a readable message.
+
+    DISCORD_TOKEN is removed from the environment once read, so the programs the bot starts
+    (FFmpeg, and Deno running YouTube's JavaScript) don't inherit it.
+    """
     env = os.environ if environ is None else environ
     config_path = Path(env.get("PYMUSICBOT_CONFIG", DEFAULT_CONFIG_PATH))
     data_dir = Path(env.get("PYMUSICBOT_DATA", DEFAULT_DATA_DIR))
 
-    token = env.get("DISCORD_TOKEN", "").strip()
+    token = env.pop("DISCORD_TOKEN", "").strip()
     if not token:
         raise ConfigError("DISCORD_TOKEN is not set. Put it in the .env file.")
 
@@ -193,8 +210,19 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
         presence=presence,
         player=player,
         files=files,
+        sources=_sources(sections["sources"]),
         emoji=EmojiConfig(**sections["emoji"]),
     )
+
+
+def _sources(raw: dict[str, Any]) -> SourcesConfig:
+    if "allowed_sites" not in raw:
+        return SourcesConfig()
+    sites = tuple(site.strip().lower().removeprefix("www.") for site in raw["allowed_sites"])
+    for site in sites:
+        if not site or any(c in site for c in "/:@ "):
+            raise ConfigError(f"sources.allowed_sites takes site names like \"youtube.com\", got {site!r}.")
+    return SourcesConfig(allowed_sites=sites)
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
