@@ -18,7 +18,8 @@ see [docker run](#docker-run).
 
 Contents: [Create the bot in Discord](#1-create-the-bot-in-discord) ·
 [The files you edit](#2-the-files-you-edit) · [Start the bot](#3-start-the-bot) ·
-[Invite it and test](#4-invite-it-and-test) · [Updating](#updating) · [Backups](#backups) ·
+[Invite it and test](#4-invite-it-and-test) ·
+[Who can use which commands](#who-can-use-which-commands) · [Updating](#updating) · [Backups](#backups) ·
 [Moving from JMusicBot](#moving-from-jmusicbot) · [Troubleshooting](#troubleshooting)
 
 ## 1. Create the bot in Discord
@@ -323,6 +324,47 @@ appear as you type.
 
 If slash commands don't show up yet, press Ctrl+R in Discord to reload it.
 
+## Who can use which commands
+
+Out of the box, the bot has four levels, and it checks them every time a command runs:
+
+| Who | Can use |
+| --- | --- |
+| Everyone | Playing and queueing music, `/queue`, `/skip` (as a vote), `/settings`, playing playlists |
+| DJs: members with the role set by `/setdj` | Also `/pause`, `/stop`, `/volume`, `/forceskip` and the other queue controls |
+| Admins: members with Manage Server | Also the server settings: `/setdj`, `/setvc`, `/setskip`, `/queuetype` |
+| Owners: `owner_id` in `config.toml`, or the application's owner | Everything, including editing playlists and `/shutdown` |
+
+Admin commands are hidden from members without Manage Server. To decide which channels the
+commands work in, or to hide them from more people, use Discord's own command permissions. They
+can be set per role, per member and per channel, for all commands or one at a time. (JMusicBot's
+`settc` text channel setting isn't used; `/settc` explains these steps instead.)
+
+1. Open Server Settings → **Integrations**, and under Bots and Apps click the bot's **Manage**
+   button. You need the Manage Server permission.
+2. **Only in some channels:** under **Channels**, set **All Channels** to ✕ and add the channels
+   where the commands should work, with ✓.
+3. **Only for some roles:** under **Roles & Members**, click **Add Roles or Members**, add the
+   roles that should see the commands with ✓, then set **@everyone** to ✕.
+4. Click **Save Changes**.
+
+Members who can't use a command don't see it at all. Some things to know:
+
+- **Members with the Administrator permission always see every command.** Discord doesn't allow
+  hiding commands from them. The bot's own levels above still apply to them.
+- **What you set in steps 2 and 3 applies to every command that has no settings of its own.**
+  That includes the admin and owner commands, so the roles you allow in step 3 see those too.
+  Running them is still refused unless the member is an admin or an owner. To hide one, click it
+  in the **Commands** list, add the role and set it to ✕. A command with its own settings ignores
+  the ones from steps 2 and 3.
+- **Members with Manage Server but not Administrator** lose sight of the admin commands once
+  @everyone is ✕. Add their role in step 3 if they need them.
+- **`/playlist` is one command** with subcommands, and Discord sets permissions per command, so
+  `/playlist play` and `/playlist create` are shown or hidden together.
+
+To check the result, try it from an account without the Administrator permission: with and
+without one of the allowed roles, and in a channel that isn't allowed.
+
 ## Updating
 
 Update when YouTube stops playing, as well as now and then: new versions bring a newer
@@ -351,6 +393,9 @@ back exactly as it was on a new machine. (Your music folder is yours to back up 
 5. Optional: move your `config.txt` settings into `config/config.toml`. The comments in
    `config.example.toml` give each old setting's new name. Commands are slash commands now, so
    the prefix settings are gone.
+6. If you used `settc` to limit the bot to one text channel: that setting isn't carried over. Set
+   it up with Discord's command permissions instead (see
+   [Who can use which commands](#who-can-use-which-commands)).
 
 ## Troubleshooting
 

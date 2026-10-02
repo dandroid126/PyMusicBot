@@ -1,4 +1,4 @@
-"""Where and when music commands work: the /settc channel, voice channel rules and permissions."""
+"""When music commands work: voice channel rules and permissions."""
 
 from conftest import run
 from fakes import (
@@ -17,16 +17,15 @@ def add_song(folder, name="song.mp3"):
     return name
 
 
-def test_music_commands_only_work_in_the_settc_channel(make_world, tmp_path):
+def test_commands_work_in_any_text_channel(make_world, tmp_path):
+    """Where commands work is set with Discord's command permissions, not by the bot."""
     async def scenario():
         world = await make_world()
-        world.bot.settings.update(GUILD_ID, text_channel_id=TEXT_CHANNEL_ID)
         song = add_song(tmp_path / "music")
-        wrong = await world.invoke("play", world.user(), channel_id=OTHER_TEXT_CHANNEL_ID, query=song)
-        assert f"only use that command in <#{TEXT_CHANNEL_ID}>" in wrong.last
-        assert wrong.ephemeral
-        right = await world.invoke("play", world.user(), query=song)
-        assert "to begin playing" in right.last
+        played = await world.invoke("play", world.user(), channel_id=OTHER_TEXT_CHANNEL_ID, query=song)
+        assert "to begin playing" in played.last
+        queue = await world.invoke("queue", world.user(), channel_id=TEXT_CHANNEL_ID)
+        assert "can only use" not in queue.last
 
     run(scenario())
 

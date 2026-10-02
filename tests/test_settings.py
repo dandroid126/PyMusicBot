@@ -43,7 +43,8 @@ def write_legacy(data_dir, data=LEGACY):
 
 def test_convert_legacy():
     guilds = convert_legacy(LEGACY)
-    assert guilds[111] == GuildSettings(voice_channel_id=222, text_channel_id=333, default_playlist="GirlsBandCry")
+    # JMusicBot's text channel (settc) isn't kept; Discord's command permissions replace it.
+    assert guilds[111] == GuildSettings(voice_channel_id=222, default_playlist="GirlsBandCry")
     assert guilds[444] == GuildSettings(
         dj_role_id=555, volume=35, repeat_mode=RepeatMode.SINGLE, skip_ratio=0.75, queue_type=QueueType.LINEAR
     )
@@ -81,9 +82,21 @@ def test_changes_persist(tmp_path):
 
 
 def test_ids_are_stored_as_strings(tmp_path):
-    SettingsStore.load(tmp_path).update(123456789012345678, text_channel_id=987654321098765432)
+    SettingsStore.load(tmp_path).update(123456789012345678, voice_channel_id=987654321098765432)
     data = json.loads((tmp_path / SETTINGS_FILE).read_text(encoding="utf-8"))
-    assert data["guilds"]["123456789012345678"]["text_channel_id"] == "987654321098765432"
+    assert data["guilds"]["123456789012345678"]["voice_channel_id"] == "987654321098765432"
+
+
+def test_a_saved_text_channel_from_older_versions_is_ignored_then_dropped(tmp_path):
+    # As an earlier PyMusicBot saved it.
+    (tmp_path / SETTINGS_FILE).write_text(json.dumps({"version": 1, "guilds": {"1": {
+        "text_channel_id": "333", "voice_channel_id": "222",
+    }}}), encoding="utf-8")
+    store = SettingsStore.load(tmp_path)
+    assert store.get(1) == GuildSettings(voice_channel_id=222)
+    store.update(1, volume=50)
+    saved = json.loads((tmp_path / SETTINGS_FILE).read_text(encoding="utf-8"))["guilds"]["1"]
+    assert "text_channel_id" not in saved and saved["voice_channel_id"] == "222"
 
 
 def test_unknown_guild_gets_defaults(tmp_path):

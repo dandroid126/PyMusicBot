@@ -3,6 +3,10 @@
 Stored in ``<data dir>/settings.json``. On first start, if that file doesn't exist but
 JMusicBot's ``serversettings.json`` does, the old file is converted into the new one. The old
 file is never modified, and it's ignored once the new file exists.
+
+JMusicBot's text channel setting (settc) isn't kept: which commands work where is set with
+Discord's own command permissions instead. Saved files that still have it load fine, and it's
+dropped on the next save.
 """
 
 from __future__ import annotations
@@ -40,7 +44,6 @@ class QueueType(StrEnum):
 
 @dataclass(frozen=True)
 class GuildSettings:
-    text_channel_id: int | None = None
     voice_channel_id: int | None = None
     dj_role_id: int | None = None
     volume: int = 100
@@ -53,7 +56,7 @@ class GuildSettings:
         data = asdict(self)
         # Discord IDs are stored as strings, like JMusicBot did, so tools that read JSON
         # numbers as floats don't corrupt them.
-        for key in ("text_channel_id", "voice_channel_id", "dj_role_id"):
+        for key in ("voice_channel_id", "dj_role_id"):
             if data[key] is not None:
                 data[key] = str(data[key])
         return data
@@ -61,7 +64,6 @@ class GuildSettings:
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> GuildSettings:
         return cls(
-            text_channel_id=_snowflake(data.get("text_channel_id")),
             voice_channel_id=_snowflake(data.get("voice_channel_id")),
             dj_role_id=_snowflake(data.get("dj_role_id")),
             volume=int(data.get("volume", 100)),
@@ -140,7 +142,6 @@ def convert_legacy(data: Any) -> dict[int, GuildSettings]:
                 repeat = "ALL"
             skip_ratio = entry.get("skip_ratio", -1)
             guilds[int(guild_id)] = GuildSettings(
-                text_channel_id=_snowflake(entry.get("text_channel_id")),
                 voice_channel_id=_snowflake(entry.get("voice_channel_id")),
                 dj_role_id=_snowflake(entry.get("dj_role_id")),
                 volume=int(entry.get("volume", 100)),

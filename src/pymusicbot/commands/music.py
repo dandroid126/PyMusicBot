@@ -37,7 +37,6 @@ def music_checks(
 ) -> tuple[GuildPlayer, VoiceChannel | None]:
     """JMusicBot's MusicCommand rules. Returns the player and, with `listening` or `joining`, the voice channel to use.
 
-    - The server's music text channel (/settc), if set, is the only place music commands work.
     - `playing`: something must be playing.
     - `listening`: the member must be in voice, not deafened, not in the AFK channel, and in the
       bot's channel (or the /setvc channel when the bot isn't connected yet).
@@ -46,8 +45,6 @@ def music_checks(
     """
     bot, guild, member = interaction.client, interaction.guild, interaction.user
     settings = bot.settings.get(guild.id)
-    if settings.text_channel_id and interaction.channel_id != settings.text_channel_id:
-        raise Denied(f"You can only use that command in <#{settings.text_channel_id}>!")
 
     player = bot.players.get(guild.id)
     if playing and not player.is_active:

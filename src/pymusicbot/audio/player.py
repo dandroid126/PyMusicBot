@@ -66,7 +66,7 @@ class GuildPlayer:
         self.current: Track | None = None
         self.audio: TrackAudio | None = None
         self.votes: set[int] = set()  # members who voted to skip the current track
-        self.text_channel_id = settings.text_channel_id  # where playback problems are reported
+        self.text_channel_id: int | None = None  # where playback problems are reported: the last music command's channel
         self._play_id = 0  # identifies the running voice.play() call; a seek keeps it
         self._end_reason: str | None = None  # "skip" or "stop" when the bot ends a track itself
         # Autoplay: tracks from the server's default playlist, played when the queue is empty.

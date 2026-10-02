@@ -25,24 +25,36 @@ def playlist_file(world, name, text):
 # Admin settings
 
 
+def test_settc_only_explains_discords_command_permissions(make_world):
+    async def scenario():
+        world = await make_world()
+        admin = world.user(9, manage_guild=True)
+        before = world.bot.settings.get(GUILD_ID)
+        result = await world.invoke("settc", admin, channel=world.channels[TEXT_CHANNEL_ID])
+        assert "Integrations" in result.last and "docs/deployment.md#who-can-use-which-commands" in result.last
+        assert result.ephemeral
+        assert world.bot.settings.get(GUILD_ID) == before  # changes nothing
+
+    run(scenario())
+
+
 def test_admin_commands_change_settings(make_world):
     async def scenario():
         world = await make_world()
         admin = world.user(9, manage_guild=True)
         await world.invoke("setdj", admin, role=role(DJ_ROLE_ID))
-        await world.invoke("settc", admin, channel=world.channels[TEXT_CHANNEL_ID])
         await world.invoke("setvc", admin, channel=world.voice)
         await world.invoke("setskip", admin, percent=75)
         await world.invoke("queuetype", admin, queue_type=QueueType.LINEAR)
         settings = world.bot.settings.get(GUILD_ID)
-        assert (settings.dj_role_id, settings.text_channel_id, settings.voice_channel_id) == (DJ_ROLE_ID, TEXT_CHANNEL_ID, VOICE_CHANNEL_ID)
+        assert (settings.dj_role_id, settings.voice_channel_id) == (DJ_ROLE_ID, VOICE_CHANNEL_ID)
         assert settings.skip_ratio == 0.75 and settings.queue_type == QueueType.LINEAR
         assert world.bot.players.get(GUILD_ID).queue.fair is False
 
-        for path in ("setdj", "settc", "setvc", "setskip"):
+        for path in ("setdj", "setvc", "setskip"):
             await world.invoke(path, admin)  # no option clears it
         settings = world.bot.settings.get(GUILD_ID)
-        assert (settings.dj_role_id, settings.text_channel_id, settings.voice_channel_id, settings.skip_ratio) == (None, None, None, None)
+        assert (settings.dj_role_id, settings.voice_channel_id, settings.skip_ratio) == (None, None, None)
 
         shown = await world.invoke("settings", world.user(2))
         fields = {f.name: f.value for f in shown.sent[-1]["embed"].fields}

@@ -16,8 +16,11 @@ plus updating, backups and moving from JMusicBot.
 | --- | --- |
 | Everyone | `/play`, `/search`, `/scsearch`, `/local`, `/queue`, `/nowplaying`, `/skip`, `/remove`, `/shuffle`, `/seek`, `/settings`, `/playlist play`, `/playlist list`, `/playlist show` |
 | DJs | `/pause`, `/stop`, `/volume`, `/repeat`, `/forceskip`, `/forceremove`, `/movetrack`, `/playnext`, `/skipto` |
-| Admins (Manage Server) | `/setdj`, `/settc`, `/setvc`, `/setskip`, `/queuetype` |
+| Admins (Manage Server) | `/setdj`, `/setvc`, `/setskip`, `/queuetype`, and `/settc` (which only explains Discord's command permissions) |
 | Owner | `/playlist create`, `/playlist append`, `/playlist remove`, `/playlist shuffle`, `/playlist delete`, `/autoplaylist`, `/setgame`, `/setstatus`, `/setname`, `/setavatar`, `/debug`, `/shutdown` |
+
+Which channels the commands work in, and who sees them, is set with Discord's own command
+permissions: see [Who can use which commands](docs/deployment.md#who-can-use-which-commands).
 
 `/play` takes a link (YouTube, SoundCloud and Bandcamp by default; other sites are refused unless
 `allowed_sites` in `config.toml` lists them), words to search YouTube for, or a file or folder

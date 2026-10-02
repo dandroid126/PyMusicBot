@@ -11,6 +11,7 @@ from ..checks import admin_only
 from ..settings import QueueType
 
 _NO_PINGS = discord.AllowedMentions.none()
+ACCESS_DOCS = "https://github.com/dandroid126/PyMusicBot/blob/main/docs/deployment.md#who-can-use-which-commands"
 
 
 def admin_command(func):
@@ -33,12 +34,20 @@ class Admin(commands.Cog):
             text = "DJ role cleared; only admins can use DJ commands."
         await interaction.response.send_message(self.bot.reply("success", text), allowed_mentions=_NO_PINGS)
 
-    @app_commands.command(description="Set the text channel for music commands. Leave empty to allow any.")
+    @app_commands.command(description="How to limit the bot's commands to channels (with Discord's settings)")
     @admin_command
     async def settc(self, interaction: discord.Interaction[MusicBot], channel: discord.TextChannel | None = None) -> None:
-        self.bot.settings.update(interaction.guild_id, text_channel_id=channel.id if channel else None)
-        text = f"Music commands can now only be used in {channel.mention}." if channel else "Music commands can now be used in any channel."
-        await interaction.response.send_message(self.bot.reply("success", text))
+        # JMusicBot's settc limited music commands to one channel. Discord's command permissions
+        # do that and more, so this only explains them, for people used to JMusicBot.
+        text = (
+            "I don't limit commands to a channel myself; Discord's own settings do that, and more:\n"
+            f"1. Server Settings → **Integrations** → **{self.bot.user.name}** → **Manage**.\n"
+            "2. Under **Channels**, turn off **All Channels** and add the channels where my commands should work.\n"
+            "3. Under **Roles & Members**, choose who can see and use my commands.\n"
+            "Members with the Administrator permission always see every command.\n"
+            f"More: <{ACCESS_DOCS}>"
+        )
+        await interaction.response.send_message(self.bot.reply("warning", text), ephemeral=True)
 
     @app_commands.command(description="Set the voice channel for music. Leave empty to allow any.")
     @admin_command

@@ -25,7 +25,6 @@ class General(commands.Cog):
         dj_role = guild.get_role(s.dj_role_id) if s.dj_role_id else None
         skip_ratio = s.skip_ratio if s.skip_ratio is not None else self.bot.config.player.skip_ratio
         embed = discord.Embed(title=f"{self.bot.user.name} settings", color=guild.me.color)
-        embed.add_field(name="Text channel", value=mention(guild.get_channel(s.text_channel_id or 0), "Any"))
         embed.add_field(name="Voice channel", value=mention(guild.get_channel(s.voice_channel_id or 0), "Any"))
         embed.add_field(name="DJ role", value=mention(dj_role, "None"))
         embed.add_field(name="Repeat", value=s.repeat_mode.value.title())
