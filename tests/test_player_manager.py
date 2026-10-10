@@ -135,17 +135,219 @@ def test_queue_is_cleared_when_the_bot_is_disconnected_by_someone_else(make_worl
         await player.connect(world.voice)
         await player.add(track("a"))
         await player.add(track("b"))
-        world.voice_client.disconnected = True  # e.g. a moderator disconnected the bot
-        world.guild.voice_client = None
-        bot_member = SimpleNamespace(id=BOT_ID, guild=world.guild)
-        await world.bot.players.on_voice_state_update(bot_member, None, SimpleNamespace(channel=None))
+        await world.voice_client.disconnect()  # what discord.py does when a moderator disconnects the bot
+        await settle()
+        await world.bot.players.on_voice_state_update(BOT_MEMBER(world), None, SimpleNamespace(channel=None))
         assert player.current is None and not player.queue
+        assert player.wanted_channel_id is None  # not rejoined
+        await world.bot.players.check_voice()
+        assert world.voice_client is None
 
     run(scenario())
 
 
 async def _no_sleep(seconds):
     return None
+
+
+def BOT_MEMBER(world):
+    return SimpleNamespace(id=BOT_ID, guild=world.guild)
+
+
+# Voice connection drops (soak test 2026-10: a slow reconnect cleared the queue and stopped playback)
+
+
+def test_a_slow_voice_reconnect_keeps_everything(make_world, monkeypatch):
+    async def scenario():
+        world = await make_world()
+        monkeypatch.setattr(player_module.asyncio, "sleep", _no_sleep)
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await player.add(track("b"))
+        world.voice_client.reconnecting = True  # still reconnecting after the "left voice" check
+        await world.bot.players.on_voice_state_update(BOT_MEMBER(world), None, SimpleNamespace(channel=None))
+        assert player.current.title == "a" and [t.title for t in player.queue] == ["b"]
+        world.voice_client.reconnecting = False
+        await world.bot.players.on_voice_state_update(BOT_MEMBER(world), None, SimpleNamespace(channel=None))
+        assert player.current.title == "a" and [t.title for t in player.queue] == ["b"]
+
+    run(scenario())
+
+
+def test_a_song_cut_off_by_a_reconnect_resumes_where_it_stopped(make_world, monkeypatch):
+    """DJ_Nina, 2026-10-06: the song was killed mid-reconnect and the queue was wiped silently."""
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await player.add(track("b"))
+        player.audio.position = 42.0
+        voice = world.voice_client
+        voice.reconnecting = True
+        voice.finish()  # discord.py's audio thread ends the song when the connection drops
+        await asyncio.sleep(0.6)  # the player is waiting for the reconnect
+        assert player.current is None and [t.title for t in player.queue] == ["a", "b"]
+        voice.reconnecting = False
+        await wait_until(lambda: player.current is not None)
+        assert player.current.title == "a" and player.current.start_offset == 42.0
+        assert [t.title for t in player.queue] == ["b"]
+
+    run(scenario())
+
+
+def test_a_song_starting_during_a_reconnect_waits_for_it(make_world):
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await player.add(track("b"))
+        world.voice_client.reconnecting = True
+        world.voice_client.after = None  # "a" ended normally just as the connection dropped
+        player._end_reason = "skip"
+        task = asyncio.create_task(player._on_play_end(player._play_id, None))
+        await asyncio.sleep(0.6)
+        assert not task.done()  # waiting, not clearing
+        world.voice_client.reconnecting = False
+        await task
+        assert player.current.title == "b"
+
+    run(scenario())
+
+
+def test_a_replaced_discord_session_rejoins_and_carries_on(make_world):
+    """Both bots, 2026-10-09: the network dropped, Discord replaced the session, voice was gone."""
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await player.add(track("b"))
+        player.audio.position = 30.0
+        old = world.voice_client
+        old.forget()
+        await world.bot.players.check_voice()  # runs right after the bot reconnects to Discord
+        await settle()
+        assert world.voice_client is not None and world.voice_client is not old
+        assert old.cleaned_up  # the forgotten connection was shut down
+        assert world.voice_client.channel is world.voice
+        assert player.current.title == "a" and player.current.start_offset == 30.0
+        assert [t.title for t in player.queue] == ["b"]
+
+    run(scenario())
+
+
+def test_a_stuck_reconnect_is_given_a_minute_then_rejoined(make_world, monkeypatch):
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        old = world.voice_client
+        old.reconnecting = True
+        clock = [1000.0]
+        monkeypatch.setattr(player_module.time, "monotonic", lambda: clock[0])
+        await world.bot.players.check_voice()
+        assert world.voice_client is old  # discord.py gets time to reconnect by itself
+        clock[0] += 61
+        await world.bot.players.check_voice()
+        await settle()
+        assert world.voice_client is not old and world.voice_client.is_connected()
+        assert player.current.title == "a"
+
+    run(scenario())
+
+
+def test_recovering_isnt_mistaken_for_leaving(make_world):
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await player.add(track("b"))
+        old = world.voice_client
+        old.forget()
+        player._recovering = True
+        player.current = None  # as recover() does after putting the song back
+        player.queue.add_at(0, track("a"))
+        await old.disconnect()  # recover() shuts the forgotten connection down: discord.py reports leaving
+        await settle()
+        await world.bot.players.on_voice_state_update(BOT_MEMBER(world), None, SimpleNamespace(channel=None))
+        player._recovering = False
+        assert [t.title for t in player.queue] == ["a", "b"]  # not cleared
+
+    run(scenario())
+
+
+def test_recovering_keeps_the_resume_position_of_a_song_still_starting(make_world):
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        resumed = track("a")
+        resumed.start_offset = 50.0
+        player.current, player.audio = resumed, None  # claimed, waiting in _start for the reconnect
+        world.voice_client.forget()
+        await world.bot.players.check_voice()
+        await settle()
+        assert player.current.title == "a" and player.current.start_offset == 50.0
+
+    run(scenario())
+
+
+def test_a_command_during_a_reconnect_waits_for_it(make_world):
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        voice = world.voice_client
+        voice.reconnecting = True
+        joining = asyncio.create_task(player.connect(world.voice))
+        await asyncio.sleep(0.6)
+        assert not joining.done()
+        voice.reconnecting = False
+        await joining
+        assert world.voice_client is voice  # the same connection, not a second one
+
+    run(scenario())
+
+
+def test_reconnecting_to_discord_checks_voice_right_away(make_world, monkeypatch):
+    async def scenario():
+        world = await make_world()
+        checks, starts = [], []
+        monkeypatch.setattr(world.bot.players, "check_voice", lambda: _record(checks))
+        monkeypatch.setattr(world.bot.players, "autostart", lambda guild: _record(starts))
+        world.bot._checked = True  # on_ready already ran once: this is a reconnect with a new session
+        await world.bot.on_ready()
+        assert checks and not starts  # recovers what was playing; doesn't restart a stopped radio
+
+    run(scenario())
+
+
+async def _record(calls):
+    calls.append(1)
+
+
+@pytest.mark.parametrize("how", ["stop", "alone", "queue finished"])
+def test_no_rejoining_after_stopping_on_purpose(make_world, how):
+    async def scenario():
+        world = await make_world()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        if how in ("stop", "alone"):  # the alone timeout calls stop() too
+            await player.stop()
+        else:
+            world.voice_client.finish()
+            await settle()
+        assert world.voice_client is None and player.wanted_channel_id is None
+        await world.bot.players.check_voice()
+        assert world.voice_client is None
+
+    run(scenario())
 
 
 def test_seek_while_paused_stays_paused(make_world):

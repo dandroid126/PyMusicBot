@@ -14,6 +14,7 @@ from .audio.nowplaying import NowPlayingMessages
 from .audio.player import GuildPlayer, PlayerManager, log_failure
 from .audio.sources import Sources
 from .config import Config
+from .health import HealthPush
 from .playlists import PlaylistStore
 from . import shutdown
 from .presence import STATUSES, parse_activity
@@ -59,6 +60,8 @@ class MusicBot(commands.Bot):
         self.now_playing = NowPlayingMessages(self)
         self.shutting_down = False
         self._checked = False
+        # Only with HEALTH_PUSH_URL set; otherwise health reporting doesn't run at all.
+        self.health = HealthPush(self, config.health_push_url) if config.health_push_url else None
         self.tree.error(self.on_app_command_error)
 
     async def setup_hook(self) -> None:
@@ -69,6 +72,8 @@ class MusicBot(commands.Bot):
         log.info("Synced %d slash command(s)", len(synced))
         self.now_playing.start()
         self.players.start()
+        if self.health is not None:
+            self.health.start()
 
     async def close(self) -> None:
         """Stop the players quietly first, so nothing reacts while discord.py leaves voice.
@@ -80,6 +85,8 @@ class MusicBot(commands.Bot):
             self.shutting_down = True
             self.now_playing.stop()
             self.players.shutdown()
+            if self.health is not None:
+                await self.health.stop()
         await super().close()
 
     async def on_ready(self) -> None:
@@ -92,6 +99,9 @@ class MusicBot(commands.Bot):
                     await self.players.autostart(guild)
                 except Exception:
                     log.exception("Couldn't start the default playlist in %s", guild)
+        else:
+            # Discord replaced the session, which drops the bot from voice: rejoin where it was playing.
+            await self.players.check_voice()
 
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState

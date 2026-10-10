@@ -32,7 +32,12 @@ DJ_ROLE_ID = 800
 
 
 class FakeVoice(discord.VoiceClient):
-    """A voice connection that records playback instead of sending audio."""
+    """A voice connection that records playback instead of sending audio.
+
+    Like discord.py's: while `reconnecting` it stays the server's voice client but isn't
+    connected, `disconnect()` cleans it up (being disconnected by someone works the same way),
+    and `forget()` is what a replaced Discord session does: dropped without being cleaned up.
+    """
 
     source = None  # shadows VoiceClient.source; the player swaps sources when seeking
 
@@ -42,9 +47,11 @@ class FakeVoice(discord.VoiceClient):
         self.after = None
         self.paused = False
         self.disconnected = False
+        self.reconnecting = False
+        self.cleaned_up = False
 
     def is_connected(self) -> bool:
-        return not self.disconnected
+        return not self.disconnected and not self.reconnecting
 
     def is_paused(self) -> bool:
         return self.paused
@@ -72,8 +79,15 @@ class FakeVoice(discord.VoiceClient):
 
     async def disconnect(self, *, force: bool = False) -> None:
         self.disconnected = True
-        self.fake_guild.voice_client = None
+        self.cleaned_up = True
+        if self.fake_guild.voice_client is self:
+            self.fake_guild.voice_client = None
         self.finish()
+
+    def forget(self) -> None:
+        """Discord replaced the bot's session: discord.py drops the connection without cleanup."""
+        self.reconnecting = True
+        self.fake_guild.voice_client = None
 
     async def move_to(self, channel, **kwargs) -> None:
         self.channel = channel

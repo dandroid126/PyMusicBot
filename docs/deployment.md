@@ -19,7 +19,8 @@ see [docker run](#docker-run).
 Contents: [Create the bot in Discord](#1-create-the-bot-in-discord) ·
 [The files you edit](#2-the-files-you-edit) · [Start the bot](#3-start-the-bot) ·
 [Invite it and test](#4-invite-it-and-test) ·
-[Who can use which commands](#who-can-use-which-commands) · [Updating](#updating) · [Backups](#backups) ·
+[Who can use which commands](#who-can-use-which-commands) · [Monitoring](#monitoring-optional) ·
+[Updating](#updating) · [Backups](#backups) ·
 [Moving from JMusicBot](#moving-from-jmusicbot) · [Troubleshooting](#troubleshooting)
 
 ## 1. Create the bot in Discord
@@ -365,6 +366,38 @@ Members who can't use a command don't see it at all. Some things to know:
 To check the result, try it from an account without the Administrator permission: with and
 without one of the allowed roles, and in a channel that isn't allowed.
 
+## Monitoring (optional)
+
+A container or process monitor only shows that the bot is running, not that it's playing. For
+that, the bot can report its own health to a push monitor, such as
+[Uptime Kuma](https://github.com/louislam/uptime-kuma)'s. Without one, skip this section: the
+bot doesn't report anything unless you set it up.
+
+Every minute the bot calls the monitor with "up", or "down" and the reason:
+
+- **Not connected to Discord** for more than 2 minutes.
+- **Not playing** for more than 2 minutes where it should be: where it was playing and wasn't
+  stopped with `/stop` (or the alone timeout, or by being disconnected by someone), and in every
+  server with both a `/setvc` channel and a default playlist.
+
+If the bot crashes, freezes or loses its network, the calls stop, and the monitor alerts on
+that too. With Uptime Kuma:
+
+1. Add a new monitor. Set **Monitor Type** to **Push** and **Heartbeat Interval** to 60
+   seconds, and give it a name.
+2. Copy the **Push URL** it shows and save the monitor.
+3. Add the URL to `.env` (copy it whole; the part after `?` doesn't matter):
+
+   ```ini
+   HEALTH_PUSH_URL=https://kuma.example.com/api/push/abc123?status=up&msg=OK&ping=
+   ```
+
+4. Restart the bot. The log says `Reporting health every 60s to the push monitor`, and the
+   monitor turns green within a minute.
+
+The URL works like a password for that monitor, so keep it in `.env` like the token. Each bot
+needs its own push monitor and URL.
+
 ## Updating
 
 Update when YouTube stops playing, as well as now and then: new versions bring a newer
@@ -415,5 +448,6 @@ container's **Logs** tab (Docker Desktop), the `start.bat` window (Python on Win
 | `Python 3.12 or newer wasn't found` (`start.bat`) | Install Python (step 3), close the window, and double-click `start.bat` again. |
 | `'Public Bot' is on` | Turn it off (step 1, points 3 and 4). Until then, anyone with the bot's ID can add it to their server. |
 | `Links can only be played from ...` | Links from other sites are refused on purpose, so nobody can make the bot load other pages, such as ones on your own network. To allow another site, add it to `allowed_sites` in `config/config.toml` (see `config.example.toml`); it works only if yt-dlp supports that site. |
+| `Couldn't reach the push monitor` | Check `HEALTH_PUSH_URL` in `.env`, and that the bot's machine can reach the monitor. The bot keeps running and tries again every minute. |
 | Online songs fail to load | Update PyMusicBot (see [Updating](#updating)). Sites like YouTube change often, and each update brings the fixes. |
 | Slash commands are missing | Press Ctrl+R in Discord. Commands also need the bot invited with the `applications.commands` scope: in the Developer Portal, open **OAuth2**, tick `bot` and `applications.commands` under **OAuth2 URL Generator**, and open the link it makes. |

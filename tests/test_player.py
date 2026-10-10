@@ -21,10 +21,11 @@ class FakeVoice:
         self.after = None
         self.paused = False
         self.disconnected = False
-        self.channel = "voice channel"
+        self.reconnecting = False  # discord.py keeps the voice client while it reconnects
+        self.channel = SimpleNamespace(id=7, name="voice channel")
 
     def is_connected(self):
-        return not self.disconnected
+        return not self.disconnected and not self.reconnecting
 
     def is_paused(self):
         return self.paused
@@ -64,7 +65,7 @@ class FakePlayer(GuildPlayer):
     fake_voice: FakeVoice
 
     @property
-    def voice(self):
+    def voice_client(self):
         return None if self.fake_voice.disconnected else self.fake_voice
 
     def _make_audio(self, track, position):

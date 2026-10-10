@@ -41,7 +41,7 @@ search on purpose. A server's default playlist
 
 | File | Written by | Holds |
 | --- | --- | --- |
-| `.env` | you | `DISCORD_TOKEN`, and optionally `MUSIC_DIR` (your music folder) and `OWNER_ID` |
+| `.env` | you | `DISCORD_TOKEN`, and optionally `MUSIC_DIR` (your music folder), `OWNER_ID` and `HEALTH_PUSH_URL` (a push monitor) |
 | `config/config.toml` | you | Bot behavior; the bot only reads it |
 | `data/settings.json` | the bot | Per-server settings changed with slash commands |
 | `data/Playlists/` | you or the bot | Playlist files, same format as JMusicBot |

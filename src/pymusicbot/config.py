@@ -2,7 +2,7 @@
 
 Two sources, by who owns them:
 - Secrets come from environment variables: ``DISCORD_TOKEN``, and optionally ``OWNER_ID`` (one
-  or more IDs, separated by commas).
+  or more IDs, separated by commas) and ``HEALTH_PUSH_URL`` (see health.py).
   They're usually kept in ``.env``, which Docker Compose reads, and which the bot reads itself
   when it runs without Docker (see ``load_env_file``).
 - Everything else comes from ``config.toml``, which the admin edits and the bot only reads.
@@ -84,6 +84,7 @@ class Config:
     token: str = field(repr=False)
     owner_ids: tuple[int, ...]  # empty: the Discord application's owner
     data_dir: Path
+    health_push_url: str | None = field(default=None, repr=False)  # holds the monitor's token
     log_level: str = "info"
     presence: PresenceConfig = PresenceConfig()
     player: PlayerConfig = PlayerConfig()
@@ -187,6 +188,10 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
     if any(owner <= 0 for owner in owner_ids):
         raise ConfigError("owner_id must be Discord user IDs. Remove it to use the application owner.")
 
+    health_push_url = env.get("HEALTH_PUSH_URL", "").strip() or None
+    if health_push_url and not health_push_url.startswith(("http://", "https://")):
+        raise ConfigError("HEALTH_PUSH_URL must be a web address starting with http:// or https://.")
+
     log_level = top.get("log_level", "info").lower()
     if log_level not in LOG_LEVELS:
         raise ConfigError(f"log_level must be one of {', '.join(LOG_LEVELS)}, got {log_level!r}.")
@@ -222,6 +227,7 @@ def load_config(environ: dict[str, str] | None = None) -> Config:
         token=token,
         owner_ids=tuple(dict.fromkeys(owner_ids)),  # without duplicates, in order
         data_dir=data_dir,
+        health_push_url=health_push_url,
         log_level=log_level,
         presence=presence,
         player=player,

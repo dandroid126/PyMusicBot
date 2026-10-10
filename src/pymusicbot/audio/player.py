@@ -2,15 +2,25 @@
 
 All state changes happen on the event loop. discord.py calls a track's `after` callback from
 its audio thread, so that callback only schedules `_on_play_end` back onto the loop.
+
+Voice connections drop now and then. discord.py reconnects by itself and keeps the voice client
+while it does, so "not connected" can mean "reconnecting": the player waits for that instead of
+treating it as having left. A track cut off by a reconnect resumes where it stopped. When
+discord.py gives up, or forgets the connection because Discord replaced the bot's session, the
+player rejoins its channel itself (`recover`), as long as it was playing and wasn't stopped on
+purpose. discord.py only cleans a voice client up when the bot really left (kicked, /stop), which
+is how the two cases are told apart.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 import shlex
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import discord
@@ -34,7 +44,25 @@ def log_failure(future: asyncio.Future) -> None:
 
 
 FRAME_SECONDS = 0.02  # discord.py sends audio in 20 ms frames
+POLL_SECONDS = 0.5  # how often to look at the voice connection while waiting on it
+RECONNECT_WAIT = 60.0  # seconds to wait for discord.py to finish reconnecting to voice
+LEFT_CHECK = 10.0  # seconds after a "left voice" event to see whether it was only a reconnect
+CONNECT_WAIT = 10.0  # seconds a command waits for a reconnect that's already underway
 RECONNECT = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+
+
+class PlayerVoiceClient(discord.VoiceClient):
+    """Remembers being cleaned up, which discord.py does only when the bot really left voice."""
+
+    cleaned_up = False
+
+    def cleanup(self) -> None:
+        self.cleaned_up = True
+        super().cleanup()
+
+
+def _cleaned_up(voice: discord.VoiceClient | None) -> bool:
+    return voice is None or getattr(voice, "cleaned_up", False)
 
 
 class TrackAudio(discord.PCMVolumeTransformer):
@@ -75,6 +103,12 @@ class GuildPlayer:
         self._autoplay_pool: list[Track] = []  # random mode: every song, picked from at random
         self._autoplay_task: asyncio.Task | None = None
         self._played_since_autoplay_load = True
+        # Where the bot is playing, until it's stopped on purpose: used to rejoin after losing voice.
+        self.wanted_channel_id: int | None = None
+        self.stopped_on_purpose = False  # /stop, the alone timeout, or disconnected by someone
+        self._voice_ref: discord.VoiceClient | None = None  # the last connection, even if discord.py forgets it
+        self.voice_down_since: float | None = None  # when voice was first seen down while wanted
+        self._recovering = False
 
     # State
 
@@ -83,9 +117,21 @@ class GuildPlayer:
         return self.bot.get_guild(self.guild_id)
 
     @property
-    def voice(self) -> discord.VoiceClient | None:
+    def voice_client(self) -> discord.VoiceClient | None:
+        """The voice connection, whether connected or still reconnecting."""
         voice = self.guild.voice_client if self.guild else None
-        return voice if isinstance(voice, discord.VoiceClient) and voice.is_connected() else None
+        return voice if isinstance(voice, discord.VoiceClient) else None
+
+    @property
+    def voice(self) -> discord.VoiceClient | None:
+        """The voice connection, if it's connected right now."""
+        voice = self.voice_client
+        return voice if voice is not None and voice.is_connected() else None
+
+    @property
+    def lost_voice(self) -> bool:
+        """discord.py forgot the connection without cleaning it up: Discord replaced the session."""
+        return self.voice_client is None and not _cleaned_up(self._voice_ref)
 
     @property
     def is_active(self) -> bool:
@@ -105,15 +151,71 @@ class GuildPlayer:
 
     async def connect(self, channel: discord.VoiceChannel | discord.StageChannel) -> None:
         voice = self.voice
+        if voice is None and self.voice_client is not None:  # reconnecting: give it a moment
+            voice = await self._wait_for_voice(CONNECT_WAIT)
+            if voice is None and self.voice_client is not None:
+                raise discord.ClientException("Still reconnecting to voice")
         if voice is None:
-            await channel.connect(self_deaf=True)
+            self._voice_ref = await channel.connect(self_deaf=True, cls=PlayerVoiceClient)
         elif voice.channel != channel:
             await voice.move_to(channel)
+        self.wanted_channel_id = channel.id
+        self.voice_down_since = None
 
     async def disconnect(self) -> None:
+        self.wanted_channel_id = None
         voice = self.voice
         if voice is not None:
             await voice.disconnect()
+
+    async def _wait_for_voice(self, timeout: float = RECONNECT_WAIT) -> discord.VoiceClient | None:
+        """The connected voice client, waiting while discord.py reconnects. None if it's gone or still down."""
+        for _ in range(int(timeout / POLL_SECONDS)):
+            voice = self.voice_client
+            if voice is None or voice.is_connected():
+                break
+            await asyncio.sleep(POLL_SECONDS)
+        return self.voice
+
+    def _put_back(self, track: Track, position: float) -> None:
+        """Queue a track that was cut off to play again first, from where it stopped."""
+        resumed = replace(track, start_offset=position if track.seekable else 0.0)
+        if track.requester is None:
+            self.autoplay.insert(0, resumed)
+        else:
+            self.queue.add_at(0, resumed)
+
+    async def recover(self) -> None:
+        """Rejoin the channel after losing voice without being told to leave, and carry on."""
+        guild = self.guild
+        channel = guild.get_channel(self.wanted_channel_id or 0) if guild else None
+        if not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+            log.warning("Lost voice in %s and its channel is gone; stopping", guild)
+            self.reset()
+            return
+        self._recovering = True
+        try:
+            if self.current is not None:
+                # Its position: how far it played, or where it was going to start.
+                position = self.position if self.audio is not None else self.current.start_offset
+                self._put_back(self.current, position)
+                self._play_id += 1  # whatever the old connection does with its track is ignored
+                self._clear_current()
+            old = self._voice_ref
+            if old is not None and not _cleaned_up(old):
+                # Stop the stuck or forgotten connection, so it doesn't fight the new one.
+                with contextlib.suppress(Exception):
+                    await old.disconnect(force=True)
+            log.info("Lost the voice connection in %s; rejoining %s", guild, channel)
+            try:
+                await self.connect(channel)
+            except (discord.ClientException, TimeoutError) as e:
+                log.warning("Couldn't rejoin %s in %s: %s; trying again soon", channel, guild, e)
+                return
+            if self.current is None:
+                await self._advance()
+        finally:
+            self._recovering = False
 
     # Queueing
 
@@ -149,6 +251,8 @@ class GuildPlayer:
     async def stop(self) -> None:
         """Stop playing, clear the queue and leave the voice channel."""
         log.info("Stopping in %s", self.guild)
+        self.wanted_channel_id = None
+        self.stopped_on_purpose = True
         self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
@@ -203,12 +307,15 @@ class GuildPlayer:
 
     def halt(self) -> None:
         """Stop reacting before shutdown: clear everything, but leave disconnecting to discord.py."""
+        self.wanted_channel_id = None
         self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
 
     def reset(self) -> None:
         """Forget everything after the bot left voice without being told to (kicked, moved out)."""
+        self.wanted_channel_id = None
+        self.stopped_on_purpose = True
         self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
@@ -294,9 +401,13 @@ class GuildPlayer:
             return False
         if self.current is not track:  # stopped while loading
             return True
-        voice = self.voice
-        if voice is None:  # left voice while loading
-            self._clear_queues()
+        voice = await self._wait_for_voice()
+        if self.current is not track:  # stopped while waiting
+            return True
+        if voice is None:
+            # Voice is down. Keep the track for when it's back: recover() rejoins, or if the bot
+            # was disconnected for real, the voice state handler clears everything.
+            self._put_back(track, position)
             self._clear_current()
             self.bot.on_track_change(self)
             return True
@@ -313,6 +424,8 @@ class GuildPlayer:
         self.audio = audio
         self.votes.clear()
         self._played_since_autoplay_load = True
+        self.wanted_channel_id = voice.channel.id
+        self.stopped_on_purpose = False
         voice.play(audio, after=after)
         log.info("Playing %s in %s", track.title, voice.channel)
         self.bot.on_track_change(self)
@@ -330,6 +443,14 @@ class GuildPlayer:
         if reason == "stop":
             return
         track = self.current
+        if reason is None and track is not None and self.voice is None:
+            # Cut off because the voice connection dropped: play it again from here once it's back.
+            log.info("Voice connection lost during %s in %s; resuming it when reconnected", track.title, self.guild)
+            self._put_back(track, self.position)
+            self._clear_current()
+            if await self._wait_for_voice() is not None and self.current is None:
+                await self._advance()
+            return
         if error:
             log.error("Playback of %s failed", track.title if track else "a track", exc_info=error)
         elif track and reason is None:  # finished normally: honor repeat mode
@@ -392,6 +513,7 @@ class PlayerManager:
     def start(self) -> None:
         if self.bot.config.player.alone_time_until_stop > 0:
             self._stop_when_alone.start()
+        self._watch_voice.start()
 
     def get(self, guild_id: int) -> GuildPlayer:
         if guild_id not in self._players:
@@ -403,6 +525,7 @@ class PlayerManager:
 
     def shutdown(self) -> None:
         self._stop_when_alone.cancel()
+        self._watch_voice.cancel()
         for player in self._players.values():
             player.halt()
 
@@ -446,12 +569,46 @@ class PlayerManager:
         if member.id != self.bot.user.id or after.channel is not None:
             return
         player = self.find(member.guild.id)
-        if player is None:
-            return
-        await asyncio.sleep(1)  # let discord.py finish tearing down (or reconnecting) the voice client
-        if player.voice is None and (player.current or player.queue):
+        if player is None or player._recovering:
+            return  # recover() disconnecting the old connection isn't the bot leaving
+        # discord.py sends this while reconnecting too. It keeps the voice client then, and cleans
+        # it up only when the bot really left (disconnected by someone, channel deleted).
+        for _ in range(int(LEFT_CHECK / POLL_SECONDS)):
+            voice = player.voice_client
+            if voice is not None and voice.is_connected():
+                return  # reconnected
+            if voice is None:
+                break
+            await asyncio.sleep(POLL_SECONDS)
+        else:
+            return  # still reconnecting; check_voice takes over if it doesn't come back
+        if player.lost_voice or player._recovering:
+            return  # forgotten, not left: check_voice rejoins
+        if player.current or player.queue or player.autoplay or player.wanted_channel_id:
             log.info("Left voice in %s; clearing the queue", member.guild)
             player.reset()
+
+    async def check_voice(self) -> None:
+        """Rejoin wherever voice was lost while playing: a reconnect that's stuck, or a connection
+        discord.py forgot because Discord replaced the session. Runs every 30 seconds, and right
+        after the bot reconnects to Discord."""
+        now = time.monotonic()
+        for player in list(self._players.values()):
+            if player.wanted_channel_id is None or player._recovering or player.voice is not None:
+                player.voice_down_since = None
+                continue
+            if player.voice_down_since is None:
+                player.voice_down_since = now
+            stuck = now - player.voice_down_since >= RECONNECT_WAIT
+            if player.lost_voice or stuck:
+                await player.recover()
+
+    @tasks.loop(seconds=30)
+    async def _watch_voice(self) -> None:
+        try:
+            await self.check_voice()
+        except Exception:
+            log.exception("Checking the voice connections failed")
 
     def _check_alone(self, guild: discord.Guild) -> None:
         """Note when nobody is listening in the bot's channel (bots and deafened members don't count)."""
