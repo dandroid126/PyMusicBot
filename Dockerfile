@@ -1,6 +1,6 @@
 # uv installs requirements.txt like pip does, only faster. It's mounted only while installing,
 # so it isn't part of the image.
-FROM ghcr.io/astral-sh/uv:0.12 AS uv
+FROM ghcr.io/astral-sh/uv:0.13 AS uv
 
 FROM python:3.14-slim AS base
 
