@@ -3,7 +3,7 @@ rem Starts PyMusicBot on Windows without Docker. Double-click it, or run it from
 rem
 rem The first run asks for the bot token, creates a Python environment in .venv and installs
 rem requirements.txt into it. Later runs reinstall only when requirements.txt changed (after an
-rem update). Needs Python 3.12 or newer and FFmpeg: see docs\deployment.md.
+rem update). Needs Python 3.12 to 3.14 and FFmpeg: see docs\deployment.md.
 setlocal
 cd /d "%~dp0"
 
@@ -36,7 +36,7 @@ if not "%CODE%"=="0" echo PyMusicBot stopped with an error. The messages above s
 goto :end
 
 :no_python
-echo Python 3.12 or newer wasn't found. Install it (see docs\deployment.md), then run this again.
+echo Python 3.12, 3.13 or 3.14 wasn't found. Install Python 3.14 (see docs\deployment.md), then run this again.
 set CODE=1
 goto :end
 
@@ -48,13 +48,17 @@ set CODE=1
 goto :end
 
 :find_python
-rem py is the Python launcher; python is used when only that is on PATH.
-call :try_python py -3 && exit /b 0
+rem py is the Python launcher; python is used when only that is on PATH. Newer Pythons
+rem are skipped: some requirements (davey) have no prebuilt wheels for them yet, and building
+rem one needs Rust and fails anyway. Raise the 3.14 here and in :try_python when they do.
+call :try_python py -3.14 && exit /b 0
+call :try_python py -3.13 && exit /b 0
+call :try_python py -3.12 && exit /b 0
 call :try_python python && exit /b 0
 exit /b 1
 
 :try_python
-%* -c "import sys; sys.exit(sys.version_info < (3, 12))" >nul 2>&1 || exit /b 1
+%* -c "import sys; sys.exit(not (3, 12) <= sys.version_info[:2] <= (3, 14))" >nul 2>&1 || exit /b 1
 set "PYTHON=%*"
 exit /b 0
 
