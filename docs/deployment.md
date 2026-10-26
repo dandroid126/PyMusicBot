@@ -239,7 +239,8 @@ again with the Start button. The note on restarts under
    winget install Gyan.FFmpeg
    ```
 
-   Or install Python 3.12 or newer from [python.org](https://www.python.org/downloads/).
+   Or install Python 3.12, 3.13 or 3.14 from [python.org](https://www.python.org/downloads/).
+   Python 3.15 doesn't work yet: one of the bot's requirements isn't available for it.
    Close the window afterwards; new programs are found only in new windows.
 2. On the [PyMusicBot GitHub page](https://github.com/dandroid126/PyMusicBot), click
    **Code**, then **Download ZIP**. Extract it; you get a folder named `PyMusicBot-main`,
@@ -255,7 +256,8 @@ it again.
 
 ### Python on Linux
 
-You need Python 3.12 or newer and FFmpeg. On Ubuntu 24.04 or newer and Debian 13 or newer:
+You need Python 3.12, 3.13 or 3.14 (not 3.15 yet) and FFmpeg. On Ubuntu 24.04 or newer and
+Debian 13 or newer:
 
 ```sh
 sudo apt install git python3-venv ffmpeg
@@ -445,7 +447,7 @@ container's **Logs** tab (Docker Desktop), the `start.bat` window (Python on Win
 | `Deno wasn't found` | Reinstall the requirements. On Windows, delete the `.venv` folder and run `start.bat` again. |
 | `Music folder ... doesn't exist` | Check `MUSIC_DIR` in `.env`. With `docker run`, check the `-v ...:/music:ro` line. |
 | `Permission denied` for `/data` (Docker on Linux) | Run the `chown` command under [Docker Compose](#docker-compose-linux-server). |
-| `Python 3.12 or newer wasn't found` (`start.bat`) | Install Python (step 3), close the window, and double-click `start.bat` again. |
+| `Python 3.12, 3.13 or 3.14 wasn't found` (`start.bat`) | Install Python 3.14 (step 3), close the window, and double-click `start.bat` again. Python 3.15 alone isn't enough yet. |
 | `'Public Bot' is on` | Turn it off (step 1, points 3 and 4). Until then, anyone with the bot's ID can add it to their server. |
 | `Links can only be played from ...` | Links from other sites are refused on purpose, so nobody can make the bot load other pages, such as ones on your own network. To allow another site, add it to `allowed_sites` in `config/config.toml` (see `config.example.toml`); it works only if yt-dlp supports that site. |
 | `Couldn't reach the push monitor` | Check `HEALTH_PUSH_URL` in `.env`, and that the bot's machine can reach the monitor. The bot keeps running and tries again every minute. |
