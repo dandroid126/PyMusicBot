@@ -5,7 +5,9 @@ import os
 import signal
 import sys
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import discord
 import pytest
 
 from conftest import run
@@ -135,7 +137,7 @@ def test_queue_is_cleared_when_the_bot_is_disconnected_by_someone_else(make_worl
         await player.connect(world.voice)
         await player.add(track("a"))
         await player.add(track("b"))
-        await world.voice_client.disconnect()  # what discord.py does when a moderator disconnects the bot
+        await world.voice_client.kick()
         await settle()
         await world.bot.players.on_voice_state_update(BOT_MEMBER(world), None, SimpleNamespace(channel=None))
         assert player.current is None and not player.queue
@@ -235,6 +237,84 @@ def test_a_replaced_discord_session_rejoins_and_carries_on(make_world):
         assert world.voice_client.channel is world.voice
         assert player.current.title == "a" and player.current.start_offset == 30.0
         assert [t.title for t in player.queue] == ["b"]
+
+    run(scenario())
+
+
+def test_a_failed_reconnect_rejoins_and_carries_on(make_world, monkeypatch):
+    """DJ_Nina, 2026-10-30: discord.py gave up reconnecting and cleaned up, which looked like being kicked."""
+    async def scenario():
+        world = await make_world()
+        monkeypatch.setattr(player_module.asyncio, "sleep", _no_sleep)
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await player.add(track("b"))
+        player.audio.position = 23.0
+        old = world.voice_client
+        await old.disconnect()  # discord.py's cleanup after the failed reconnect; it ends the song too
+        await settle()
+        await world.bot.players.on_voice_state_update(BOT_MEMBER(world), None, SimpleNamespace(channel=None))
+        assert not player.stopped_on_purpose and player.wanted_channel_id == VOICE_CHANNEL_ID
+        await world.bot.players.check_voice()
+        await settle()
+        assert world.voice_client is not None and world.voice_client is not old
+        assert player.current.title == "a" and player.current.start_offset == 23.0
+        assert [t.title for t in player.queue] == ["b"]
+
+    run(scenario())
+
+
+class ClosedVoiceSocket:
+    """The voice websocket: dropped with 1006, and once closed by discord.py, with 1000."""
+
+    def __init__(self):
+        self.close_code = 1006
+        self.seq_ack = -1
+        self.secret_key = None
+
+    async def poll_event(self):
+        raise discord.ConnectionClosed(self, shard_id=None, code=self.close_code)
+
+    async def close(self):
+        self.close_code = 1000
+
+
+def real_voice_client(monkeypatch):
+    """A PlayerVoiceClient on discord.py's real connection code, with the gateway faked."""
+    client = Mock(loop=asyncio.get_running_loop())
+    channel = Mock(id=VOICE_CHANNEL_ID, **{"_get_voice_client_key.return_value": (GUILD_ID, "guild_id")})
+    voice = player_module.PlayerVoiceClient(client, channel)
+    voice._connection.timeout = 0.01
+    voice._connection.ws = ClosedVoiceSocket()
+
+    async def change_voice_state(*, channel, **kwargs):
+        if channel is None:  # Discord confirms a moment after the bot asks to leave
+            asyncio.get_running_loop().call_later(
+                0.001, lambda: asyncio.ensure_future(voice.on_voice_state_update({"channel_id": None}))
+            )
+
+    channel.guild.change_voice_state = change_voice_state
+    monkeypatch.setattr("discord.voice_state.ExponentialBackoff", lambda: SimpleNamespace(delay=lambda: 0))
+    return voice
+
+
+def test_discord_py_cleaning_up_after_a_failed_reconnect_isnt_being_removed(monkeypatch):
+    async def scenario():
+        voice = real_voice_client(monkeypatch)
+        await asyncio.wait_for(voice._connection._poll_voice_ws(True), timeout=5)
+        await asyncio.sleep(0.01)
+        assert voice.cleaned_up and not voice.removed
+
+    run(scenario())
+
+
+def test_discord_py_reporting_an_unexpected_leave_is_being_removed(monkeypatch):
+    async def scenario():
+        voice = real_voice_client(monkeypatch)
+        await voice.on_voice_state_update({"channel_id": None})
+        await asyncio.sleep(0.01)
+        assert voice.cleaned_up and voice.removed
 
     run(scenario())
 
