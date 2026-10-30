@@ -8,8 +8,9 @@ while it does, so "not connected" can mean "reconnecting": the player waits for 
 treating it as having left. A track cut off by a reconnect resumes where it stopped. When
 discord.py gives up, or forgets the connection because Discord replaced the bot's session, the
 player rejoins its channel itself (`recover`), as long as it was playing and wasn't stopped on
-purpose. discord.py only cleans a voice client up when the bot really left (kicked, /stop), which
-is how the two cases are told apart.
+purpose. discord.py also cleans a voice client up when a reconnect fails, so being cleaned up
+doesn't mean someone removed the bot. Only a "left the channel" event that discord.py wasn't
+expecting from its own disconnecting means that (`PlayerVoiceClient.removed`).
 """
 
 from __future__ import annotations
@@ -52,9 +53,15 @@ RECONNECT = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 
 
 class PlayerVoiceClient(discord.VoiceClient):
-    """Remembers being cleaned up, which discord.py does only when the bot really left voice."""
+    """Remembers being cleaned up, and whether that's because someone removed the bot from voice."""
 
     cleaned_up = False
+    removed = False  # disconnected by someone, or the channel was deleted
+
+    async def on_voice_state_update(self, data) -> None:
+        if data["channel_id"] is None and not self._connection._expecting_disconnect:
+            self.removed = True
+        await super().on_voice_state_update(data)
 
     def cleanup(self) -> None:
         self.cleaned_up = True
@@ -130,8 +137,11 @@ class GuildPlayer:
 
     @property
     def lost_voice(self) -> bool:
-        """discord.py forgot the connection without cleaning it up: Discord replaced the session."""
-        return self.voice_client is None and not _cleaned_up(self._voice_ref)
+        """The connection is gone while wanted, and nobody removed the bot: Discord replaced the
+        session, or discord.py gave up reconnecting."""
+        if self.wanted_channel_id is None or self.voice_client is not None or self._voice_ref is None:
+            return False
+        return not getattr(self._voice_ref, "removed", False)
 
     @property
     def is_active(self) -> bool:
@@ -583,14 +593,14 @@ class PlayerManager:
         else:
             return  # still reconnecting; check_voice takes over if it doesn't come back
         if player.lost_voice or player._recovering:
-            return  # forgotten, not left: check_voice rejoins
+            return  # lost, not removed: check_voice rejoins
         if player.current or player.queue or player.autoplay or player.wanted_channel_id:
             log.info("Left voice in %s; clearing the queue", member.guild)
             player.reset()
 
     async def check_voice(self) -> None:
-        """Rejoin wherever voice was lost while playing: a reconnect that's stuck, or a connection
-        discord.py forgot because Discord replaced the session. Runs every 30 seconds, and right
+        """Rejoin wherever voice was lost while playing: a reconnect that's stuck or failed, or a
+        connection discord.py forgot because Discord replaced the session. Runs every 30 seconds, and right
         after the bot reconnects to Discord."""
         now = time.monotonic()
         for player in list(self._players.values()):

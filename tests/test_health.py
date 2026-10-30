@@ -1,5 +1,7 @@
 """Health reports to a push monitor (Uptime Kuma): off unless configured, and what counts as down."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from conftest import run
@@ -112,6 +114,40 @@ def test_lost_voice_while_playing_is_down(monitored):
         world.health.problems()
         later(world)
         assert world.health.problems() == ["Not playing in Test Server for 2 min"]
+
+    run(scenario())
+
+
+def test_a_failed_reconnect_that_cant_rejoin_is_down(monitored):
+    """DJ_Nina, 2026-10-30: silent for hours while reporting up."""
+    async def scenario():
+        world = await monitored()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await world.voice_client.disconnect()  # discord.py's cleanup after the failed reconnect
+        await settle()
+        member = SimpleNamespace(id=world.bot.user.id, guild=world.guild)
+        await world.bot.players.on_voice_state_update(member, None, SimpleNamespace(channel=None))
+        world.health.problems()
+        later(world)
+        assert world.health.problems() == ["Not playing in Test Server for 2 min"]
+
+    run(scenario())
+
+
+def test_being_disconnected_by_someone_is_healthy(monitored):
+    async def scenario():
+        world = await monitored()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await world.voice_client.kick()
+        await settle()
+        member = SimpleNamespace(id=world.bot.user.id, guild=world.guild)
+        await world.bot.players.on_voice_state_update(member, None, SimpleNamespace(channel=None))
+        later(world)
+        assert world.health.problems() == []
 
     run(scenario())
 
