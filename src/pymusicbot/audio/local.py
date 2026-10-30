@@ -20,6 +20,12 @@ AUDIO_EXTENSIONS = frozenset({
     ".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wav", ".wma", ".webm", ".mka", ".aiff", ".alac",
 })
 INDEX_MAX_AGE = 60  # seconds before autocomplete rescans the folders
+# System and NAS folders, which can hold thumbnails, indexes, or deleted and old copies of songs.
+# Names starting with a dot are ignored too.
+IGNORED_NAMES = frozenset({
+    "@eaDir", "#recycle", "#snapshot", "@Recycle", "@Recently-Snapshot",
+    "$RECYCLE.BIN", "System Volume Information", "lost+found",
+})
 
 
 class LocalLibrary:
@@ -53,6 +59,8 @@ class LocalLibrary:
         """Every audio file under `directory`, sorted, skipping links that lead outside the library."""
         files = []
         for path in sorted(directory.rglob("*")):
+            if _is_ignored(path.relative_to(directory)):
+                continue
             real = path.resolve()
             if real.is_file() and is_audio(real) and any(real.is_relative_to(f) for f in self.folders):
                 files.append(real)
@@ -92,6 +100,8 @@ class LocalLibrary:
             if not folder.is_dir():
                 continue
             for path in folder.rglob("*"):
+                if _is_ignored(path.relative_to(folder)):
+                    continue
                 relative = path.relative_to(folder).as_posix()
                 if path.is_dir():
                     dirs.append(relative + "/")
@@ -100,6 +110,10 @@ class LocalLibrary:
         self._index = sorted(dirs, key=str.lower) + sorted(files, key=str.lower)
         self._indexed_at = time.monotonic()
         log.debug("Indexed %d folders and %d files in the music library", len(dirs), len(files))
+
+
+def _is_ignored(relative: Path) -> bool:
+    return any(part.startswith(".") or part in IGNORED_NAMES for part in relative.parts)
 
 
 def _squash(text: str) -> str:
