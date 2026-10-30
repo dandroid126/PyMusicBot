@@ -50,6 +50,34 @@ def test_search_matches_every_word_and_lists_folders_first(library):
     assert asyncio.run(library.search("album second")) == ["Album/02 Second.flac"]
 
 
+@pytest.mark.parametrize(
+    "folder",
+    ["@eaDir", "#recycle", "#snapshot", "@Recycle", "@Recently-Snapshot", "$RECYCLE.BIN",
+     "System Volume Information", "lost+found", ".Trashes"],
+)
+def test_system_folders_are_left_out(library, folder):
+    index = library.folders[0] / "Album" / folder / "01 First.mp3"
+    index.mkdir(parents=True)
+    (index / "preview.mp3").write_bytes(b"")
+    assert not any(folder in entry for entry in asyncio.run(library.search("")))
+    assert asyncio.run(library.suggest("preview")) is None
+    assert "preview.mp3" not in [f.name for f in library.audio_files(library.folders[0])]
+
+
+def test_hidden_files_with_audio_names_are_left_out(library):
+    (library.folders[0] / "Album" / "._01 First.mp3").write_bytes(b"")
+    assert not any("._" in entry for entry in asyncio.run(library.search("")))
+    assert "._01 First.mp3" not in [f.name for f in library.audio_files(library.folders[0])]
+
+
+def test_names_only_containing_a_dot_or_ignored_word_are_kept(library):
+    album = library.folders[0] / "Mr. Made Up" / "#recycle bin blues"
+    album.mkdir(parents=True)
+    (album / "song.v2.mp3").write_bytes(b"")
+    assert "Mr. Made Up/#recycle bin blues/song.v2.mp3" in asyncio.run(library.search(""))
+    assert "song.v2.mp3" in [f.name for f in library.audio_files(library.folders[0])]
+
+
 def test_probe_reads_tags(tmp_path):
     path = tmp_path / "tone.mp3"
     subprocess.run(
