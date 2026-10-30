@@ -113,6 +113,7 @@ class GuildPlayer:
         # Where the bot is playing, until it's stopped on purpose: used to rejoin after losing voice.
         self.wanted_channel_id: int | None = None
         self.stopped_on_purpose = False  # /stop, the alone timeout, or disconnected by someone
+        self.left_voice: tuple[str, float] | None = None  # why the bot was made to leave voice, and when
         self._voice_ref: discord.VoiceClient | None = None  # the last connection, even if discord.py forgets it
         self.voice_down_since: float | None = None  # when voice was first seen down while wanted
         self._recovering = False
@@ -201,7 +202,7 @@ class GuildPlayer:
         channel = guild.get_channel(self.wanted_channel_id or 0) if guild else None
         if not isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
             log.warning("Lost voice in %s and its channel is gone; stopping", guild)
-            self.reset()
+            self.reset("Voice channel gone")
             return
         self._recovering = True
         try:
@@ -263,6 +264,7 @@ class GuildPlayer:
         log.info("Stopping in %s", self.guild)
         self.wanted_channel_id = None
         self.stopped_on_purpose = True
+        self.left_voice = None
         self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
@@ -322,10 +324,11 @@ class GuildPlayer:
         self._end_reason = "stop"
         self._clear_current()
 
-    def reset(self) -> None:
+    def reset(self, reason: str) -> None:
         """Forget everything after the bot left voice without being told to (kicked, moved out)."""
         self.wanted_channel_id = None
         self.stopped_on_purpose = True
+        self.left_voice = (reason, time.monotonic())
         self._clear_queues()
         self._end_reason = "stop"
         self._clear_current()
@@ -436,6 +439,7 @@ class GuildPlayer:
         self._played_since_autoplay_load = True
         self.wanted_channel_id = voice.channel.id
         self.stopped_on_purpose = False
+        self.left_voice = None
         voice.play(audio, after=after)
         log.info("Playing %s in %s", track.title, voice.channel)
         self.bot.on_track_change(self)
@@ -596,7 +600,7 @@ class PlayerManager:
             return  # lost, not removed: check_voice rejoins
         if player.current or player.queue or player.autoplay or player.wanted_channel_id:
             log.info("Left voice in %s; clearing the queue", member.guild)
-            player.reset()
+            player.reset("Disconnected by someone")
 
     async def check_voice(self) -> None:
         """Rejoin wherever voice was lost while playing: a reconnect that's stuck or failed, or a

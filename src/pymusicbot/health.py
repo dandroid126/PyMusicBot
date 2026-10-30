@@ -1,8 +1,8 @@
 """Optional health reports to a push monitor such as Uptime Kuma's.
 
 Only created when HEALTH_PUSH_URL is set; without it nothing here runs. Every minute the bot
-calls the URL with status=up, or status=down and the reason. The monitor alerts on "down", and
-also when the calls stop (the bot crashed, froze or lost its network).
+calls the URL with status=up and what the bot is doing, or status=down and the reason. The
+monitor alerts on "down", and also when the calls stop (the bot crashed, froze or lost its network).
 
 Healthy means connected to Discord, and playing wherever the bot is expected to: where it was
 playing and wasn't stopped on purpose, and in every server with both a /setvc channel and a
@@ -39,6 +39,16 @@ def push_base_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
+def format_duration(seconds: float) -> str:
+    """Whole minutes, or the two largest units: 5 min, 3 h 12 min, 2 d 3 h."""
+    minutes = math.floor(seconds / 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days} d {hours} h"
+    return f"{hours} h {minutes} min" if hours else f"{minutes} min"
+
+
 class HealthPush:
     def __init__(self, bot: MusicBot, url: str):
         self.bot = bot
@@ -47,6 +57,7 @@ class HealthPush:
         self._first_seen: dict[str, float] = {}  # problem -> when it was first noticed
         self._discord_down_since: float | None = None
         self._failing = False
+        self._idle_since: float | None = None
 
     def start(self) -> None:
         self.bot.add_listener(self._on_disconnect, "on_disconnect")
@@ -75,7 +86,7 @@ class HealthPush:
         current = self._current_problems(now)  # problem -> when it started, if known
         self._first_seen = {p: min(self._first_seen.get(p, now), started) for p, started in current.items()}
         return [
-            f"{problem} for {math.floor((now - since) / 60)} min"
+            f"{problem} for {format_duration(now - since)}"
             for problem, since in self._first_seen.items()
             if now - since >= GRACE_SECONDS
         ]
@@ -103,6 +114,22 @@ class HealthPush:
         voice = player.voice if player is not None else None
         return voice is not None and (voice.is_playing() or voice.is_paused())
 
+    # What's going on, when nothing's wrong
+
+    def status(self) -> str:
+        """What the monitor's "up" reports show: being made to leave first, as the message can get cut off."""
+        now = time.monotonic()
+        left, playing = [], []
+        for guild in self.bot.guilds:
+            player = self.bot.players.find(guild.id)
+            if player is not None and player.left_voice is not None:
+                reason, since = player.left_voice
+                left.append(f"{reason} in {guild.name} {format_duration(now - since)} ago")
+            elif self._playing(guild):
+                playing.append(f"Playing in {guild.name}")
+        self._idle_since = None if playing else self._idle_since or now
+        return "; ".join(left + playing) or f"Idle for {format_duration(now - self._idle_since)}"
+
     # Reporting
 
     @tasks.loop(seconds=INTERVAL_SECONDS)
@@ -111,7 +138,8 @@ class HealthPush:
 
     async def push(self) -> None:
         problems = self.problems()
-        params = {"status": "down" if problems else "up", "msg": "; ".join(problems)[:250] or "OK"}
+        status = self.status()
+        params = {"status": "down" if problems else "up", "msg": "; ".join(problems or [status])[:250]}
         latency = self.bot.latency
         if math.isfinite(latency):
             params["ping"] = str(round(latency * 1000))
