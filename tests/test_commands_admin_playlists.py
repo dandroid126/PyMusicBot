@@ -117,6 +117,50 @@ def test_playlist_create_append_remove_shuffle_delete(make_world, tmp_path):
     run(scenario())
 
 
+def test_playlist_show_sorts_entries_but_keeps_the_numbers_remove_uses(make_world):
+    async def scenario():
+        world = await make_world()
+        playlist_file(world, "mix", "zebra song.mp3\nApple song.mp3\nmango song.mp3\n")
+
+        shown = await world.invoke("playlist show", world.user(2), name="mix")
+        assert shown.sent[-1]["embed"].description.splitlines() == [
+            "`2.` Apple song.mp3", "`3.` mango song.mp3", "`1.` zebra song.mp3",
+        ]
+        assert "view" not in shown.sent[-1]
+
+        removed = await world.invoke("playlist remove", world.user(OWNER_ID), name="mix", entry="2")
+        assert "Removed `Apple song.mp3`" in removed.last
+
+    run(scenario())
+
+
+def test_playlist_show_pages_through_every_entry_of_a_long_playlist(make_world):
+    async def scenario():
+        world = await make_world()
+        names = [f"{'long folder name/' * 5}song {i:03}.mp3" for i in range(100)]
+        playlist_file(world, "long", "\n".join(names))
+
+        shown = await world.invoke("playlist show", world.user(2), name="long")
+        pages = shown.sent[-1]["view"].pages
+        assert len(pages) > 1
+        assert all(len(page.description) <= 4096 for page in pages)
+        assert pages[0].title.startswith("long (100 entries")
+        assert pages[-1].footer.text == f"Page {len(pages)}/{len(pages)}"
+        assert "".join(page.description for page in pages).count("song ") == 100
+
+    run(scenario())
+
+
+def test_playlist_show_says_when_a_playlist_is_empty(make_world):
+    async def scenario():
+        world = await make_world()
+        playlist_file(world, "empty", "")
+        shown = await world.invoke("playlist show", world.user(2), name="empty")
+        assert shown.sent[-1]["embed"].description == "This playlist is empty."
+
+    run(scenario())
+
+
 def _choice(mode: ShuffleMode) -> discord.app_commands.Choice:
     return discord.app_commands.Choice(name=mode.value, value=mode.value)
 

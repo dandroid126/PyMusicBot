@@ -14,6 +14,7 @@ from ..audio.sources import SEARCH_PREFIX, SourceError
 from ..bot import MusicBot
 from ..checks import Denied, owner_only
 from ..playlists import PlaylistError, ShuffleMode, clean_name
+from ..views import PagedView
 from .music import music_checks, requester_of
 
 MAX_MESSAGE = 2000
@@ -118,23 +119,30 @@ class Playlists(commands.Cog):
         playlist = self.bot.playlists.load(name)
         if playlist is None:
             raise Denied(f"Playlist `{clean_name(name)}` doesn't exist!")
-        # File order, so the numbers match /playlist remove even for shuffled playlists.
-        entries = self.bot.playlists.entries(name)
-        lines = [f"`{i + 1}.` {discord.utils.escape_markdown(item)}" for i, item in enumerate(entries)]
-        description, shown = "", 0
+        # Sorted to be easy to read, but numbered by file position to match /playlist remove.
+        entries = sorted(enumerate(self.bot.playlists.entries(name), 1), key=lambda entry: entry[1].casefold())
+        lines = [f"`{i}.` {discord.utils.escape_markdown(item)}" for i, item in entries]
+        descriptions = [""]
         for line in lines:
-            if len(description) + len(line) > 3800:
-                break
-            description += line + "\n"
-            shown += 1
-        if shown < len(lines):
-            description += f"...and {len(lines) - shown} more"
-        embed = discord.Embed(
-            title=f"{playlist.name} ({len(lines)} entries, {MODE_LABELS[playlist.mode]})",
-            description=description or "This playlist is empty.",
-            color=interaction.guild.me.color,
-        )
-        await interaction.response.send_message(embed=embed)
+            if len(descriptions[-1]) + len(line) > 3800:
+                descriptions.append("")
+            descriptions[-1] += line + "\n"
+        pages = [
+            discord.Embed(
+                title=f"{playlist.name} ({len(lines)} entries, {MODE_LABELS[playlist.mode]})",
+                description=description or "This playlist is empty.",
+                color=interaction.guild.me.color,
+            )
+            for description in descriptions
+        ]
+        if len(pages) == 1:
+            await interaction.response.send_message(embed=pages[0])
+            return
+        for number, page in enumerate(pages, 1):
+            page.set_footer(text=f"Page {number}/{len(pages)}")
+        view = PagedView(interaction.user.id, pages)
+        await interaction.response.send_message(embed=view.embed, view=view)
+        view.message = await interaction.original_response()
 
     @playlist.command(name="create", description="Create an empty playlist (owner)")
     @owner_only
