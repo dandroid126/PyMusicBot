@@ -1,5 +1,7 @@
 """Admin settings, playlist and owner commands."""
 
+from types import SimpleNamespace
+
 import discord
 
 from conftest import run
@@ -100,7 +102,7 @@ def test_playlist_create_append_remove_shuffle_delete(make_world, tmp_path):
             "Band/Album/a.mp3", "Band/Album/b.mp3", "Band/single.mp3", "search:lofi", "https://youtu.be/x",
         ]
 
-        removed = await world.invoke("playlist remove", owner, name="road_trip", entry="4")
+        removed = await world.invoke("playlist remove", owner, name="road_trip", entry="search:lofi")
         assert "Removed `search:lofi`" in removed.last
 
         await world.invoke("playlist shuffle", owner, name="road_trip", mode=_choice(ShuffleMode.RANDOM))
@@ -117,19 +119,55 @@ def test_playlist_create_append_remove_shuffle_delete(make_world, tmp_path):
     run(scenario())
 
 
-def test_playlist_show_sorts_entries_but_keeps_the_numbers_remove_uses(make_world):
+def test_playlist_show_sorts_entries_ignoring_case(make_world):
     async def scenario():
         world = await make_world()
         playlist_file(world, "mix", "zebra song.mp3\nApple song.mp3\nmango song.mp3\n")
 
         shown = await world.invoke("playlist show", world.user(2), name="mix")
-        assert shown.sent[-1]["embed"].description.splitlines() == [
-            "`2.` Apple song.mp3", "`3.` mango song.mp3", "`1.` zebra song.mp3",
-        ]
+        assert shown.sent[-1]["embed"].description.splitlines() == ["Apple song.mp3", "mango song.mp3", "zebra song.mp3"]
         assert "view" not in shown.sent[-1]
 
-        removed = await world.invoke("playlist remove", world.user(OWNER_ID), name="mix", entry="2")
+    run(scenario())
+
+
+def test_playlist_remove_by_name(make_world):
+    async def scenario():
+        world = await make_world()
+        owner = world.user(OWNER_ID)
+        path = playlist_file(world, "mix", "# a comment\nzebra song.mp3\nApple song.mp3\n1999.mp3\n")
+
+        removed = await world.invoke("playlist remove", owner, name="mix", entry="apple SONG.mp3")
         assert "Removed `Apple song.mp3`" in removed.last
+        assert path.read_text(encoding="utf-8") == "# a comment\nzebra song.mp3\n1999.mp3\n"
+
+        refused = await world.invoke("playlist remove", owner, name="mix", entry="1")
+        assert "isn't in that playlist" in refused.last
+        assert world.bot.playlists.entries("mix") == ["zebra song.mp3", "1999.mp3"]
+
+        missing = await world.invoke("playlist remove", owner, name="nope", entry="zebra song.mp3")
+        assert "doesn't exist" in missing.last
+
+    run(scenario())
+
+
+def test_playlist_remove_suggestions_handle_entries_over_discords_limit(make_world):
+    async def scenario():
+        world = await make_world()
+        owner = world.user(OWNER_ID)
+        long_entry = "folder/" * 20 + "made up song.mp3"
+        playlist_file(world, "mix", f"zebra song.mp3\n{long_entry}\nApple song.mp3\n")
+        cog = world.bot.get_cog("Playlists")
+        interaction = SimpleNamespace(namespace=SimpleNamespace(name="mix"))
+
+        choices = await cog.entry_choices(interaction, "")
+        assert [c.value for c in choices] == ["Apple song.mp3", "position:2", "zebra song.mp3"]
+        assert all(len(c.name) <= 100 for c in choices)
+        assert [c.value for c in await cog.entry_choices(interaction, "ZEBRA")] == ["zebra song.mp3"]
+        assert [c.value for c in await cog.entry_choices(interaction, "made up")] == ["position:2"]
+
+        await world.invoke("playlist remove", owner, name="mix", entry="position:2")
+        assert world.bot.playlists.entries("mix") == ["zebra song.mp3", "Apple song.mp3"]
 
     run(scenario())
 

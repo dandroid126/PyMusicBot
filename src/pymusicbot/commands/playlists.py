@@ -18,6 +18,8 @@ from ..views import PagedView
 from .music import music_checks, requester_of
 
 MAX_MESSAGE = 2000
+MAX_CHOICE_VALUE = 100  # Discord's limit; longer entries are sent as their position instead
+POSITION_PREFIX = "position:"
 MODE_LABELS = {
     ShuffleMode.OFF: "in order",
     ShuffleMode.SHUFFLE: "shuffled: every song once before any repeats",
@@ -35,11 +37,15 @@ class Playlists(commands.Cog):
         text = current.lower()
         return [app_commands.Choice(name=n, value=n) for n in self.bot.playlists.names() if text in n.lower()][:25]
 
-    async def entry_positions(self, interaction: discord.Interaction[MusicBot], current: str) -> list[app_commands.Choice[str]]:
+    async def entry_choices(self, interaction: discord.Interaction[MusicBot], current: str) -> list[app_commands.Choice[str]]:
         entries = self.bot.playlists.entries(interaction.namespace.name or "")
         text = current.lower()
-        choices = [app_commands.Choice(name=_clip(f"{i}. {e}", 100), value=str(i)) for i, e in enumerate(entries, 1)]
-        return [c for c in choices if text in c.name.lower()][:25]
+        matches = [(i, e) for i, e in enumerate(entries, 1) if text in e.lower()]
+        matches.sort(key=lambda match: match[1].casefold())
+        return [
+            app_commands.Choice(name=_clip(e, 100), value=e if len(e) <= MAX_CHOICE_VALUE else f"{POSITION_PREFIX}{i}")
+            for i, e in matches[:25]
+        ]
 
     async def library_entries(self, interaction: discord.Interaction[MusicBot], current: str) -> list[app_commands.Choice[str]]:
         """Library suggestions for the entry being typed after the last |."""
@@ -119,9 +125,8 @@ class Playlists(commands.Cog):
         playlist = self.bot.playlists.load(name)
         if playlist is None:
             raise Denied(f"Playlist `{clean_name(name)}` doesn't exist!")
-        # Sorted to be easy to read, but numbered by file position to match /playlist remove.
-        entries = sorted(enumerate(self.bot.playlists.entries(name), 1), key=lambda entry: entry[1].casefold())
-        lines = [f"`{i}.` {discord.utils.escape_markdown(item)}" for i, item in entries]
+        entries = sorted(self.bot.playlists.entries(name), key=str.casefold)
+        lines = [discord.utils.escape_markdown(item) for item in entries]
         descriptions = [""]
         for line in lines:
             if len(descriptions[-1]) + len(line) > 3800:
@@ -186,13 +191,14 @@ class Playlists(commands.Cog):
 
     @playlist.command(name="remove", description="Remove one entry from a playlist (owner)")
     @app_commands.describe(entry="The entry to remove (suggested as you type)")
-    @app_commands.autocomplete(name=playlist_names, entry=entry_positions)
+    @app_commands.autocomplete(name=playlist_names, entry=entry_choices)
     @owner_only
     async def remove(self, interaction: discord.Interaction[MusicBot], name: str, entry: str) -> None:
-        try:
-            position = int(entry)
-        except ValueError:
-            raise Denied("Pick an entry from the suggestions, or give its number from `/playlist show`.") from None
+        if self.bot.playlists.load(name) is None:
+            raise Denied(f"Playlist `{clean_name(name)}` doesn't exist!")
+        position = _entry_position(self.bot.playlists.entries(name), entry)
+        if position is None:
+            raise Denied(f"`{discord.utils.escape_markdown(entry)}` isn't in that playlist. Pick an entry from the suggestions.")
         playlist, removed = self._run(self.bot.playlists.remove, name, position)
         await interaction.response.send_message(
             self.bot.reply("success", f"Removed `{discord.utils.escape_markdown(removed)}` from playlist `{playlist}`.")
@@ -284,6 +290,14 @@ async def expand_entries(library: LocalLibrary, items: list[str]) -> tuple[list[
         else:
             expanded.append(library.display_path(path))
     return expanded, problems
+
+
+def _entry_position(entries: list[str], entry: str) -> int | None:
+    """The 1-based position of `entry`, by its text (ignoring case) or a suggestion's position value."""
+    if entry.startswith(POSITION_PREFIX) and entry.removeprefix(POSITION_PREFIX).isdecimal():
+        return int(entry.removeprefix(POSITION_PREFIX))
+    wanted = entry.strip().casefold()
+    return next((i for i, e in enumerate(entries, 1) if e.casefold() == wanted), None)
 
 
 def _clip(text: str, length: int) -> str:
