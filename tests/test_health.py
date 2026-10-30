@@ -10,7 +10,7 @@ from pymusicbot import health as health_module
 from pymusicbot.audio.track import Requester, Track
 from pymusicbot.bot import MusicBot
 from pymusicbot.config import ConfigError, load_config
-from pymusicbot.health import GRACE_SECONDS, HealthPush, push_base_url
+from pymusicbot.health import GRACE_SECONDS, HealthPush, format_duration, push_base_url
 
 KUMA = "https://kuma.example/api/push/s3cretToken?status=up&msg=OK&ping="
 
@@ -186,6 +186,63 @@ def test_not_connected_to_discord_is_down(monitored):
     run(scenario())
 
 
+# What "up" reports say
+
+
+@pytest.mark.parametrize(
+    "seconds, text",
+    [(0, "0 min"), (119, "1 min"), (3600, "1 h 0 min"), (11520, "3 h 12 min"), (183600, "2 d 3 h")],
+)
+def test_durations(seconds, text):
+    assert format_duration(seconds) == text
+
+
+def test_status_says_playing(monitored):
+    async def scenario():
+        world = await monitored()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        assert world.health.status() == "Playing in Test Server"
+
+    run(scenario())
+
+
+def test_status_says_how_long_its_been_idle(monitored):
+    async def scenario():
+        world = await monitored(radio=False)
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        assert world.health.status() == "Playing in Test Server"
+        await player.stop()
+        assert world.health.status() == "Idle for 0 min"
+        later(world, 720)
+        assert world.health.status() == "Idle for 12 min"
+
+    run(scenario())
+
+
+def test_status_says_when_someone_disconnected_the_bot_until_it_plays_again(monitored):
+    async def scenario():
+        world = await monitored()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
+        await world.voice_client.kick()
+        await settle()
+        member = SimpleNamespace(id=world.bot.user.id, guild=world.guild)
+        await world.bot.players.on_voice_state_update(member, None, SimpleNamespace(channel=None))
+        later(world, 11520)
+        assert world.health.status() == "Disconnected by someone in Test Server 3 h 12 min ago"
+
+        await player.connect(world.voice)
+        await player.add(track("b"))
+        assert world.health.status() == "Playing in Test Server"
+
+    run(scenario())
+
+
 # Reporting
 
 
@@ -212,12 +269,18 @@ def test_pushes_up_or_down_with_the_reason(monitored, caplog):
     async def scenario():
         world = await monitored()
         session = world.health._session = FakeSession()
+        player = world.bot.players.get(GUILD_ID)
+        await player.connect(world.voice)
+        await player.add(track("a"))
         await world.health.push()
+        await player.disconnect()
+        await settle()
+        world.health.problems()
         later(world)
         await world.health.push()
         (url, up), (_, down) = session.calls
         assert url == "https://kuma.example/api/push/s3cretToken"
-        assert up["status"] == "up" and up["msg"] == "OK"
+        assert up["status"] == "up" and up["msg"] == "Playing in Test Server"
         assert down == {**down, "status": "down", "msg": "Not playing in Test Server for 2 min"}
 
         session.status = 404

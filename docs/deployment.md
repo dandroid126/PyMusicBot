@@ -375,7 +375,15 @@ that, the bot can report its own health to a push monitor, such as
 [Uptime Kuma](https://github.com/louislam/uptime-kuma)'s. Without one, skip this section: the
 bot doesn't report anything unless you set it up.
 
-Every minute the bot calls the monitor with "up", or "down" and the reason:
+Every minute the bot calls the monitor with "up" and what it's doing, or "down" and the reason.
+"Up" doesn't send an alert, but the message is in the monitor's heartbeat list:
+
+- `Playing in <server>`
+- `Idle for 12 min`: not playing anywhere, for example after `/stop` or the alone timeout.
+- `Disconnected by someone in <server> 3 h 12 min ago`: the bot won't come back by itself. This
+  stays until it plays there again.
+
+"Down" sends an alert, for one of these reasons:
 
 - **Not connected to Discord** for more than 2 minutes.
 - **Not playing** for more than 2 minutes where it should be: where it was playing and wasn't
